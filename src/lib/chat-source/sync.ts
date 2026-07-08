@@ -255,7 +255,7 @@ export async function syncShop(
   let pagesWalked = 0;
 
   for (let page = 0; page < maxPages; page++) {
-    const res = await listConversations('shopee', shopId, { pageSize: 20, pageToken: cursor });
+    const res = await listConversations('shopee', shopId, { pageSize: 50, pageToken: cursor });
     await sleep(READ_SPACING_MS);
     pagesWalked++;
     const convs: any[] = Array.isArray(res?.conversations) ? res.conversations : [];

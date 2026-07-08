@@ -36,7 +36,7 @@ export async function register() {
       // Then spend the rest of the budget backfilling shops that aren't fully
       // caught up yet (so our conversation list matches Chat++'s full history).
       // A few shops per tick; each finishes over successive ticks, then is skipped.
-      const bf = await backfillShops({ shops: 3, maxPagesPerShop: 15, sinceDays: 90 });
+      const bf = await backfillShops({ shops: 5, maxPagesPerShop: 30, sinceDays: 90 });
       const bfConv = bf.reduce((s, x) => s + (x?.conversations || 0), 0);
       const done = bf.filter((x) => x?.caught_up).length;
       if (bf.length) console.log(`[cron] backfill — ${bf.length} shops, +${bfConv} conv, ${done} now caught up`);
