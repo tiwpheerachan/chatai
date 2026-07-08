@@ -87,6 +87,8 @@ function AttachmentView({ att, onSeller, onOpenImage }: { att: MessageAttachment
       return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><Fi name="box-open" className="text-sm" /> สินค้า #{String(a.item_id ?? '')}</div>;
     case 'order':
       return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><Fi name="credit-card" className="text-sm" /> ออเดอร์ {String(a.order_sn ?? '')}</div>;
+    case 'voucher':
+      return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><Fi name="ticket" className="text-sm" /> คูปอง {String(a.voucher_code ?? '')}</div>;
     default:
       return <span className="text-xs opacity-70">[{a.type}]</span>;
   }
@@ -126,6 +128,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const [newTask, setNewTask] = useState('');
   const [recProds, setRecProds] = useState<any[] | null>(null);
   const [panelProdQ, setPanelProdQ] = useState('');
+  const [vouchers, setVouchers] = useState<{ list: any[]; scopeMissing: boolean } | null>(null);
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
   const [panelTab, setPanelTab] = useState<'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('orders');
@@ -269,7 +272,7 @@ export function InboxClient({ userId }: { userId: string }) {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
     setBuyerOrders(null); setOrdersLoading(true);
-    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false); setPanelProdQ('');
+    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false); setPanelProdQ(''); setVouchers(null);
     fetch(`/api/conversations/${id}/orders`)
       .then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setBuyerOrders({ list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched }); })
@@ -280,7 +283,25 @@ export function InboxClient({ userId }: { userId: string }) {
     fetch(`/api/conversations/${id}/products`).then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
       .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
+    // Ongoing vouchers for the คูปอง tab.
+    fetch(`/api/conversations/${id}/vouchers`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setVouchers({ list: Array.isArray(d?.vouchers) ? d.vouchers : [], scopeMissing: !!d?.scopeMissing }); })
+      .catch(() => { if (id === activeIdRef.current) setVouchers({ list: [], scopeMissing: false }); });
   }, [activeId, loadTasks]);
+
+  const sendVoucherCard = async (v: any) => {
+    if (!active || sending) return;
+    setSending(true);
+    try {
+      const r = await fetch(`/api/conversations/${active.id}/vouchers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voucher_id: v.voucher_id, voucher_code: v.voucher_code }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งคูปองไม่สำเร็จ'); }
+      else refreshActive();
+    } finally { setSending(false); }
+  };
+  const voucherLabel = (v: any) => v.reward_type === 2 ? `ลด ${v.percentage}%${v.max_price ? ` (สูงสุด ฿${Number(v.max_price).toLocaleString()})` : ''}` : `ลด ฿${Number(v.discount_amount || 0).toLocaleString()}`;
 
   // สินค้า tab search — empty query = best-sellers / all.
   const searchPanelProds = useCallback((q: string) => {
@@ -1139,8 +1160,34 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'coupon' && (
               <div className="p-4 space-y-2 text-xs">
-                <div className="flex items-center gap-1.5"><Fi name="ticket" className="text-sm text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
-                <div className="text-[11px] text-slate-400 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ต้องให้ทีม platform เปิดให้ก่อน) พอเปิดแล้วจะเลือก/ส่งคูปองในแชทได้ทันที</div>
+                <div className="flex items-center gap-1.5"><Fi name="ticket" className="text-sm text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปองที่กำลังใช้ได้</span></div>
+                {vouchers === null ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
+                ) : vouchers.scopeMissing ? (
+                  <div className="text-[11px] text-amber-600 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ให้ทีม platform ผูก scope นี้กับคีย์ที่ใช้อยู่ก่อน) พอผูกแล้วคูปองจะขึ้นที่นี่ทันที</div>
+                ) : vouchers.list.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {vouchers.list.map((v: any) => (
+                      <div key={v.voucher_id} className="rounded-lg border border-slate-200 px-2.5 py-2 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-800 truncate">{v.voucher_name || v.voucher_code}</span>
+                          <span className="shrink-0 rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[10px] font-semibold">{voucherLabel(v)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                          <span className="font-mono">{v.voucher_code}</span>
+                          {v.min_basket_price ? <span>· ขั้นต่ำ ฿{Number(v.min_basket_price).toLocaleString()}</span> : null}
+                          {v.usage_quantity ? <span>· เหลือ {Math.max(0, (v.usage_quantity || 0) - (v.current_usage || 0))}/{v.usage_quantity}</span> : null}
+                        </div>
+                        <button onClick={() => sendVoucherCard(v)} disabled={sending}
+                          className="w-full mt-0.5 inline-flex items-center justify-center gap-1 rounded-md bg-indigo-600 text-white py-1 disabled:opacity-50">
+                          <Fi name="paper-plane" className="text-[11px]" /> ส่งคูปองให้ลูกค้า
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400">ร้านนี้ไม่มีคูปองที่กำลังใช้งานอยู่</div>
+                )}
               </div>
             )}
 

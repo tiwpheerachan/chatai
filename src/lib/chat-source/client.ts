@@ -347,10 +347,12 @@ export async function listVouchers(
   shopId: string,
   status: 'upcoming' | 'ongoing' | 'expired' | 'all' = 'ongoing',
 ): Promise<Voucher[]> {
-  const data = await call<{ voucher_list?: Voucher[]; vouchers?: Voucher[] }>(
+  const data = await call<any>(
     `/api/v1/shopee/vouchers?${qs({ shop_id: shopId, status, page_size: 50 })}`,
   );
-  return (data?.voucher_list || data?.vouchers || []) as Voucher[];
+  // Proxy returns Shopee's raw body — the list may sit at a few nesting levels.
+  const list = data?.voucher_list || data?.vouchers || data?.response?.voucher_list || data?.data?.voucher_list;
+  return Array.isArray(list) ? (list as Voucher[]) : [];
 }
 
 /** Send an existing voucher card into a chat (human-triggered). Uses `chat` scope. */
