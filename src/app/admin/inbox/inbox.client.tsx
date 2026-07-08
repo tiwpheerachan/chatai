@@ -124,6 +124,10 @@ export function InboxClient({ userId }: { userId: string }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [newTask, setNewTask] = useState('');
   const [recProds, setRecProds] = useState<any[] | null>(null);
+  // Right customer panel: resizable width + tabbed sections (Chat++ style).
+  const [panelW, setPanelW] = useState(360);
+  const [panelTab, setPanelTab] = useState<'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('orders');
+  const panelWRef = useRef(360);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -151,6 +155,33 @@ export function InboxClient({ userId }: { userId: string }) {
   }, [loadConvos]);
 
   const userName = useCallback((id: string | null | undefined) => (id ? team.find(u => u.id === id)?.name || null : null), [team]);
+
+  // Restore the saved panel width once on mount.
+  useEffect(() => {
+    const s = Number(localStorage.getItem('inboxPanelW'));
+    if (s >= 300 && s <= 680) { setPanelW(s); panelWRef.current = s; }
+  }, []);
+  // Drag the panel's left edge to resize (panel is right-docked, so width grows as
+  // the cursor moves left). Clamped, persisted to localStorage on release.
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.min(680, Math.max(300, window.innerWidth - ev.clientX));
+      panelWRef.current = w;
+      setPanelW(w);
+    };
+    const onUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      localStorage.setItem('inboxPanelW', String(Math.round(panelWRef.current)));
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
 
   // Track the currently-selected conversation so late-arriving fetches (from a
   // previous conversation's request or a poll) never overwrite the open thread.
@@ -848,10 +879,15 @@ export function InboxClient({ userId }: { userId: string }) {
         )}
       </div>
 
-      {/* Customer panel */}
+      {/* Customer panel — resizable + tabbed (Chat++ style) */}
       {active && (
-        <div className="w-72 bg-white border-l border-slate-200 overflow-y-auto scroll-thin">
-          <div className="p-4 border-b border-slate-100 text-center">
+        <div className="bg-white border-l border-slate-200 flex flex-col shrink-0 relative" style={{ width: panelW }}>
+          {/* Drag handle on the left edge to resize the panel */}
+          <div onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง"
+            className="absolute left-0 top-0 h-full w-1.5 -ml-1 cursor-col-resize z-20 hover:bg-indigo-400/40 active:bg-indigo-500/50" />
+
+          {/* Header — always visible */}
+          <div className="p-4 border-b border-slate-100 text-center shrink-0">
             <div className="mx-auto mb-2 w-fit"><Avatar name={active.customer?.display_name} src={active.customer?.avatar} size="xl" /></div>
             <div className="font-semibold text-slate-900 truncate">{active.customer?.display_name}</div>
             <div className="flex items-center justify-center gap-1.5 mt-1.5">
@@ -862,170 +898,194 @@ export function InboxClient({ userId }: { userId: string }) {
             </div>
           </div>
 
-          {/* Identity — the data we actually have from the platform */}
-          <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ข้อมูลลูกค้า</div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">ชื่อผู้ใช้</span><span className="font-medium text-slate-800 truncate">{active.customer?.display_name || '—'}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">Buyer ID</span><span className="font-mono text-slate-700 truncate">{active.buyer_id || active.customer?.channel_user_id || '—'}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">แบรนด์</span><span className="font-medium text-slate-800">{active.brand?.name || '—'}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">Shop ID</span><span className="font-mono text-slate-700 truncate">{active.shop_id || '—'}</span></div>
+          {/* Tab bar */}
+          <div className="flex border-b border-slate-200 shrink-0 text-[11px] font-medium overflow-x-auto scroll-thin">
+            {([
+              { key: 'info', label: 'ข้อมูล', icon: null, badge: 0 },
+              { key: 'orders', label: 'ออเดอร์', icon: CreditCard, badge: buyerOrders?.list.length || 0 },
+              { key: 'products', label: 'สินค้า', icon: Sparkles, badge: 0 },
+              { key: 'tasks', label: 'งาน', icon: ListChecks, badge: tasks.filter((t: any) => !t.done).length },
+              { key: 'coupon', label: 'คูปอง', icon: Ticket, badge: 0 },
+            ] as const).map(t => (
+              <button key={t.key} onClick={() => setPanelTab(t.key)}
+                className={cn('flex-1 min-w-[56px] px-1 py-2 flex flex-col items-center gap-0.5 border-b-2 -mb-px whitespace-nowrap',
+                  panelTab === t.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700')}>
+                <span className="flex items-center gap-1">
+                  {t.icon && <t.icon className="w-3.5 h-3.5" />}{t.label}
+                  {t.badge > 0 && <span className="ml-0.5 rounded-full bg-slate-200 text-slate-600 text-[9px] px-1 leading-4">{t.badge}</span>}
+                </span>
+              </button>
+            ))}
           </div>
 
-          {/* Activity */}
-          <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">กิจกรรม</div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">ติดต่อครั้งแรก</span><span className="text-slate-700">{fmtDate(active.customer?.created_at || active.created_at)}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">ข้อความล่าสุด</span><span className="text-slate-700">{timeAgo(active.last_message_at) || '—'}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">จำนวนข้อความ</span><span className="font-semibold text-slate-800">{active.messages?.length ?? 0}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-slate-500">ยังไม่อ่าน</span><span className="font-semibold text-slate-800">{active.unread ?? 0}</span></div>
-          </div>
+          {/* Tab content (scrolls) */}
+          <div className="flex-1 overflow-y-auto scroll-thin">
 
-          {/* Contact — only when present */}
-          {(active.customer?.email || active.customer?.phone) && (
-            <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-              <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ติดต่อ</div>
-              {active.customer?.email && <div className="flex justify-between gap-2"><span className="text-slate-500">Email</span><span className="text-slate-700 truncate">{active.customer.email}</span></div>}
-              {active.customer?.phone && <div className="flex justify-between gap-2"><span className="text-slate-500">โทร</span><span className="text-slate-700">{active.customer.phone}</span></div>}
-            </div>
-          )}
-
-          {/* Buyer's real order history for this shop (Shopee buyer-orders API) */}
-          <div className="p-4 space-y-2 text-xs border-b border-slate-100">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ประวัติการสั่งซื้อ</span>
-              {buyerOrders && buyerOrders.list.length > 0 && (
-                <span className="text-[10px] font-semibold text-slate-500">{buyerOrders.list.length} ออเดอร์</span>
+            {panelTab === 'info' && (<>
+              <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+                <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ข้อมูลลูกค้า</div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">ชื่อผู้ใช้</span><span className="font-medium text-slate-800 truncate">{active.customer?.display_name || '—'}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Buyer ID</span><span className="font-mono text-slate-700 truncate">{active.buyer_id || active.customer?.channel_user_id || '—'}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">แบรนด์</span><span className="font-medium text-slate-800">{active.brand?.name || '—'}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Shop ID</span><span className="font-mono text-slate-700 truncate">{active.shop_id || '—'}</span></div>
+              </div>
+              <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+                <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">กิจกรรม</div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">ติดต่อครั้งแรก</span><span className="text-slate-700">{fmtDate(active.customer?.created_at || active.created_at)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">ข้อความล่าสุด</span><span className="text-slate-700">{timeAgo(active.last_message_at) || '—'}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">จำนวนข้อความ</span><span className="font-semibold text-slate-800">{active.messages?.length ?? 0}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">ยังไม่อ่าน</span><span className="font-semibold text-slate-800">{active.unread ?? 0}</span></div>
+              </div>
+              {(active.customer?.email || active.customer?.phone) && (
+                <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ติดต่อ</div>
+                  {active.customer?.email && <div className="flex justify-between gap-2"><span className="text-slate-500">Email</span><span className="text-slate-700 truncate">{active.customer.email}</span></div>}
+                  {active.customer?.phone && <div className="flex justify-between gap-2"><span className="text-slate-500">โทร</span><span className="text-slate-700">{active.customer.phone}</span></div>}
+                </div>
               )}
-            </div>
-            {ordersLoading ? (
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
-            ) : buyerOrders && buyerOrders.list.length > 0 ? (
-              <div className="space-y-1.5">
-                {buyerOrders.list.map((o: any) => (
-                  <div key={o.order_sn} className="rounded-lg border border-slate-200 px-2.5 py-2 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[10px] text-slate-500 truncate">{o.order_sn}</span>
-                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
-                    </div>
-                    {(o.items || []).map((it: any, i: number) => (
-                      <div key={i} className="flex gap-2 items-start">
-                        {it.image_url
-                          // eslint-disable-next-line @next/next/no-img-element
-                          ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button>
-                          : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><CreditCard className="w-4 h-4 text-slate-300" /></div>}
-                        <div className="min-w-0 flex-1 leading-tight">
-                          <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
-                          <div className="text-slate-400">{it.model_name ? `${it.model_name} · ` : ''}× {it.quantity}</div>
-                          {it.item_id && (
-                            <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
-                              className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
-                              <Send className="w-2.5 h-2.5" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
-                            </button>
-                          )}
+              <div className="p-4 space-y-1.5 text-xs">
+                <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ยอดซื้อ</div>
+                {(active.customer?.order_count || active.customer?.ltv) ? (
+                  <>
+                    <div className="flex justify-between gap-2"><span className="text-slate-500">ยอดซื้อสะสม (LTV)</span><span className="font-semibold text-slate-800">฿{(active.customer?.ltv || 0).toLocaleString()}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-slate-500">จำนวนออเดอร์</span><span className="font-semibold text-slate-800">{active.customer?.order_count || 0}</span></div>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-slate-400 leading-relaxed">ยังไม่มียอดซื้อสะสม — ต้องเชื่อม Order API (ecom ยังไม่เปิดให้ดึง)</div>
+                )}
+              </div>
+            </>)}
+
+            {panelTab === 'orders' && (<>
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ประวัติการสั่งซื้อ</span>
+                  {buyerOrders && buyerOrders.list.length > 0 && (
+                    <span className="text-[10px] font-semibold text-slate-500">{buyerOrders.list.length} ออเดอร์</span>
+                  )}
+                </div>
+                {ordersLoading ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
+                ) : buyerOrders && buyerOrders.list.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {buyerOrders.list.map((o: any) => (
+                      <div key={o.order_sn} className="rounded-lg border border-slate-200 px-2.5 py-2 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] text-slate-500 truncate">{o.order_sn}</span>
+                          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
+                        </div>
+                        {(o.items || []).map((it: any, i: number) => (
+                          <div key={i} className="flex gap-2 items-start">
+                            {it.image_url
+                              // eslint-disable-next-line @next/next/no-img-element
+                              ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button>
+                              : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><CreditCard className="w-4 h-4 text-slate-300" /></div>}
+                            <div className="min-w-0 flex-1 leading-tight">
+                              <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
+                              <div className="text-slate-400">{it.model_name ? `${it.model_name} · ` : ''}× {it.quantity}</div>
+                              {it.item_id && (
+                                <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
+                                  className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
+                                  <Send className="w-2.5 h-2.5" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                          <span>{o.order_date}{o.cod ? ' · เก็บเงินปลายทาง' : ''}</span>
+                          <a href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">เปิด ↗</a>
                         </div>
                       </div>
                     ))}
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
-                      <span>{o.order_date}{o.cod ? ' · เก็บเงินปลายทาง' : ''}</span>
-                      <a href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">เปิด ↗</a>
-                    </div>
                   </div>
-                ))}
+                ) : (
+                  <div className="text-[11px] text-slate-400">
+                    {buyerOrders && !buyerOrders.matched
+                      ? 'ไม่พบประวัติการสั่งซื้อสำหรับชื่อผู้ใช้นี้ (ชื่อร้านค้าอาจต่างจากตอนสั่ง)'
+                      : 'ยังไม่พบประวัติการสั่งซื้อ'}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="text-[11px] text-slate-400">
-                {buyerOrders && !buyerOrders.matched
-                  ? 'ไม่พบประวัติการสั่งซื้อสำหรับชื่อผู้ใช้นี้ (ชื่อร้านค้าอาจต่างจากตอนสั่ง)'
-                  : 'ยังไม่พบประวัติการสั่งซื้อ'}
-              </div>
-            )}
-          </div>
-
-          {/* Orders explicitly referenced in the chat thread (order cards / shipping) */}
-          {((active as any).order_refs?.length ?? 0) > 0 && (
-            <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-              <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">อ้างถึงในแชทนี้</div>
-              <div className="space-y-1">
-                {((active as any).order_refs as string[]).map((sn) => (
-                  <a key={sn} href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer"
-                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50 group">
-                    <span className="font-mono text-slate-700 truncate">{sn}</span>
-                    <span className="text-[10px] text-brand-600 opacity-0 group-hover:opacity-100 shrink-0">เปิด ↗</span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Work-order tasks (ใบสั่งงาน) — internal follow-ups for this chat */}
-          {active.channel === 'shopee' && (
-            <div className="p-4 space-y-2 text-xs border-b border-slate-100">
-              <div className="flex items-center gap-1.5"><ListChecks className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ใบสั่งงาน</span></div>
-              <div className="flex items-center gap-1">
-                <input value={newTask} onChange={e => setNewTask(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
-                  placeholder="เพิ่มงานที่ต้องทำต่อ…" className="flex-1 border border-slate-200 rounded-md px-2 py-1 text-[11px]" />
-                <button onClick={addTask} className="p-1 rounded-md bg-indigo-600 text-white"><Plus className="w-3.5 h-3.5" /></button>
-              </div>
-              {tasks.length > 0 && (
-                <div className="space-y-1">
-                  {tasks.map((t: any) => (
-                    <div key={t.id} className="flex items-start gap-1.5 group">
-                      <button onClick={() => toggleTask(t.id, !t.done)} className={cn('mt-0.5 w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center', t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300')}>
-                        {t.done && <Check className="w-2.5 h-2.5" />}
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <div className={cn('leading-tight', t.done ? 'line-through text-slate-400' : 'text-slate-700')}>{t.title}</div>
-                        {t.assignee?.name && <div className="text-[9px] text-slate-400">→ {t.assignee.name}</div>}
-                      </div>
-                      <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
-                    </div>
-                  ))}
+              {((active as any).order_refs?.length ?? 0) > 0 && (
+                <div className="p-4 space-y-1.5 text-xs border-t border-slate-100">
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">อ้างถึงในแชทนี้</div>
+                  <div className="space-y-1">
+                    {((active as any).order_refs as string[]).map((sn) => (
+                      <a key={sn} href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50 group">
+                        <span className="font-mono text-slate-700 truncate">{sn}</span>
+                        <span className="text-[10px] text-brand-600 opacity-0 group-hover:opacity-100 shrink-0">เปิด ↗</span>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
-          )}
+            </>)}
 
-          {/* Recommended products — send a card with one click */}
-          {active.channel === 'shopee' && recProds && recProds.length > 0 && (
-            <div className="p-4 space-y-2 text-xs border-b border-slate-100">
-              <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">สินค้าแนะนำ (ขายดี)</span></div>
-              <div className="space-y-1">
-                {recProds.map((p: any) => (
-                  <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
-                    className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    {p.image_url ? <img src={p.image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" /> : <div className="w-8 h-8 rounded bg-slate-100 shrink-0" />}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] text-slate-800 line-clamp-1">{p.item_name}</div>
-                      <div className="text-[10px]"><span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>{p.in_stock ? '' : ' · หมด'}</div>
-                    </div>
-                    <Send className="w-3 h-3 text-slate-300 shrink-0" />
-                  </button>
-                ))}
-                <div className="text-[9px] text-slate-400">กดเพื่อส่งการ์ดสินค้าให้ลูกค้า · ค้นหาเพิ่มได้ที่ 📎 การ์ดสินค้า</div>
+            {panelTab === 'products' && (
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">สินค้าแนะนำ (ขายดี)</span></div>
+                {recProds === null ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
+                ) : recProds.length > 0 ? (
+                  <div className="space-y-1">
+                    {recProds.map((p: any) => (
+                      <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
+                        className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {p.image_url ? <img src={p.image_url} alt="" className="w-9 h-9 rounded object-cover shrink-0" /> : <div className="w-9 h-9 rounded bg-slate-100 shrink-0" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] text-slate-800 line-clamp-2">{p.item_name}</div>
+                          <div className="text-[10px]"><span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>{p.in_stock ? '' : ' · หมด'}</div>
+                        </div>
+                        <Send className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                      </button>
+                    ))}
+                    <div className="text-[10px] text-slate-400 pt-1">กดเพื่อส่งการ์ดสินค้าให้ลูกค้า · ค้นหาสินค้าอื่นได้ที่ 📎 การ์ดสินค้า</div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400">ไม่มีข้อมูลสินค้าสำหรับร้านนี้</div>
+                )}
               </div>
-            </div>
-          )}
-
-          {/* Coupons — blocked until the platform grants the shopee_voucher scope */}
-          {active.channel === 'shopee' && (
-            <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-              <div className="flex items-center gap-1.5"><Ticket className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
-              <div className="text-[11px] text-slate-400 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ต้องให้ทีม platform เปิดให้ก่อน) พอเปิดแล้วจะเลือก/ส่งคูปองในแชทได้ทันที</div>
-            </div>
-          )}
-
-          {/* Commerce — real numbers if enriched, else a hint */}
-          <div className="p-4 space-y-1.5 text-xs">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ยอดซื้อ</div>
-            {(active.customer?.order_count || active.customer?.ltv) ? (
-              <>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">ยอดซื้อสะสม (LTV)</span><span className="font-semibold text-slate-800">฿{(active.customer?.ltv || 0).toLocaleString()}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">จำนวนออเดอร์</span><span className="font-semibold text-slate-800">{active.customer?.order_count || 0}</span></div>
-              </>
-            ) : (
-              <div className="text-[11px] text-slate-400 leading-relaxed">ยังไม่มียอดซื้อสะสม — ต้องเชื่อม Order API (ecom ยังไม่เปิดให้ดึง)</div>
             )}
+
+            {panelTab === 'tasks' && (
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-1.5"><ListChecks className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ใบสั่งงาน</span></div>
+                <div className="flex items-center gap-1">
+                  <input value={newTask} onChange={e => setNewTask(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
+                    placeholder="เพิ่มงานที่ต้องทำต่อ…" className="flex-1 border border-slate-200 rounded-md px-2 py-1.5 text-[11px]" />
+                  <button onClick={addTask} className="p-1.5 rounded-md bg-indigo-600 text-white"><Plus className="w-3.5 h-3.5" /></button>
+                </div>
+                {tasks.length > 0 ? (
+                  <div className="space-y-1.5 pt-1">
+                    {tasks.map((t: any) => (
+                      <div key={t.id} className="flex items-start gap-1.5 group">
+                        <button onClick={() => toggleTask(t.id, !t.done)} className={cn('mt-0.5 w-4 h-4 rounded border shrink-0 flex items-center justify-center', t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300')}>
+                          {t.done && <Check className="w-3 h-3" />}
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className={cn('leading-snug', t.done ? 'line-through text-slate-400' : 'text-slate-700')}>{t.title}</div>
+                          {t.assignee?.name && <div className="text-[9px] text-slate-400">→ {t.assignee.name}</div>}
+                        </div>
+                        <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 pt-1">ยังไม่มีงาน — เพิ่มสิ่งที่ต้องทำต่อกับแชทนี้ เช่น “ตามเลขพัสดุ”, “โทรกลับ”</div>
+                )}
+              </div>
+            )}
+
+            {panelTab === 'coupon' && (
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-1.5"><Ticket className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ต้องให้ทีม platform เปิดให้ก่อน) พอเปิดแล้วจะเลือก/ส่งคูปองในแชทได้ทันที</div>
+              </div>
+            )}
+
           </div>
         </div>
       )}
