@@ -69,7 +69,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-64 bg-white/55 supports-[backdrop-filter]:bg-white/45 backdrop-blur-2xl border-r border-white/60 flex flex-col h-screen sticky top-0">
+    <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0">
       <div className="px-4 py-4">
         <Wordmark size={56} />
       </div>
@@ -106,13 +106,10 @@ export function Sidebar({
                           transition={{ type: 'spring', stiffness: 480, damping: 38 }}
                         />
                       )}
-                      <span className={cn(
-                        'relative z-10 flex items-center justify-center shrink-0 w-7 h-7 rounded-lg transition-colors',
-                        active ? 'bg-white/15' : 'bg-slate-100 group-hover/nav:bg-slate-200',
-                      )}>
+                      <span className="relative z-10 flex items-center justify-center shrink-0 w-6 h-6">
                         <Fi
                           name={it.icon}
-                          className={cn('text-[15px] transition-colors', active ? 'text-white' : 'text-slate-500 group-hover/nav:text-slate-700')}
+                          className={cn('text-lg transition-colors', active ? 'text-white' : 'text-slate-400 group-hover/nav:text-slate-700')}
                         />
                       </span>
                       <span className={cn(
