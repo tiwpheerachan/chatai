@@ -99,9 +99,16 @@ export function InboxClient({ userId }: { userId: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [loadError, setLoadError] = useState(false);
   const loadConvos = useCallback(async () => {
-    const r = await fetch('/api/conversations');
-    setConvos(await r.json());
+    try {
+      const r = await fetch('/api/conversations');
+      const d = await r.json();
+      // Only replace the list with a real array. A transient error response
+      // ({error:...}) must NOT wipe the inbox (that caused "list appears then vanishes").
+      if (Array.isArray(d)) { setConvos(d); setLoadError(false); }
+      else setLoadError(true);
+    } catch { setLoadError(true); }
   }, []);
 
   useEffect(() => {
@@ -172,7 +179,7 @@ export function InboxClient({ userId }: { userId: string }) {
   }, [lightbox]);
 
   const filtered = useMemo(() => {
-    let base = convos;
+    let base = Array.isArray(convos) ? convos : [];
     if (filter === 'unread') base = convos.filter(c => c.unread > 0);
     else if (filter === 'mine') base = convos.filter(c => c.assigned_to === userId);
     else if (filter === 'ai') base = convos.filter(c => c.ai_handling);
@@ -260,7 +267,7 @@ export function InboxClient({ userId }: { userId: string }) {
   // Auto-update: light background sync so new Shopee messages arrive on their own.
   useEffect(() => {
     if (!autoSync) return;
-    const id = setInterval(() => { runSync({ silent: true, maxPages: 1 }); }, 45000);
+    const id = setInterval(() => { runSync({ silent: true, maxPages: 1 }); }, 120000);
     return () => clearInterval(id);
   }, [autoSync, runSync]);
 
@@ -332,6 +339,7 @@ export function InboxClient({ userId }: { userId: string }) {
             })}
           </div>
           <div className="flex items-center gap-2 ml-auto">
+            {loadError && <span className="text-xs text-amber-600">เชื่อมต่อสะดุด · กำลังลองใหม่…</span>}
             {syncNote && <span className="text-xs text-slate-500">{syncNote}</span>}
             <button onClick={() => setAutoSync(a => !a)} title="ดึงข้อความใหม่อัตโนมัติทุก ~45 วินาที"
               className={cn('px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition',
