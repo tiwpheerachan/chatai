@@ -17,7 +17,7 @@ export async function register() {
   if (process.env.NODE_ENV !== 'production') return;  // don't auto-sync in local dev
   if (process.env.DISABLE_CRON === '1') return;
 
-  const INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes, ONE shop (round-robin)
+  const INTERVAL_MS = 90 * 1000; // every 90s, ONE shop (round-robin) — full fleet ≈ every 25 min
   let running = false;
 
   const tick = async () => {
@@ -28,7 +28,7 @@ export async function register() {
       // responsive (a full 17-shop sweep at once overloaded Render Starter →
       // "เชื่อมต่อสะดุด"). Over ~34 min the whole fleet is covered, then repeats.
       const { syncNextShop } = await import('@/lib/chat-source/sync');
-      const r = await syncNextShop({ maxPages: 2, sinceDays: 7 });
+      const r = await syncNextShop({ sinceDays: 7 }); // page count auto: aggressive if behind, cheap if caught up
       if (r) console.log(`[cron] synced ${r.brand ?? r.shop_id}: +${r.conversations} conv, +${r.messages} msg`);
     } catch (e) {
       console.error('[cron] sync failed:', (e as Error)?.message);

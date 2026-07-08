@@ -430,8 +430,12 @@ export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number
   if (!_rrShops.length) return null;
   const shopId = _rrShops[_rrIndex % _rrShops.length];
   _rrIndex = (_rrIndex + 1) % _rrShops.length;
+  // Behind shops (cursor hasn't reached "now") walk aggressively to catch up fast;
+  // caught-up shops just check the tail cheaply for new messages.
+  const { data: srow } = await sb.from('chat_shops').select('caught_up').eq('shop_id', shopId).maybeSingle();
+  const pages = opts.maxPages ?? (srow?.caught_up ? 2 : 12);
   try {
-    return await syncShop(shopId, { maxPages: opts.maxPages ?? 2, sinceDays: opts.sinceDays ?? 7 });
+    return await syncShop(shopId, { maxPages: pages, sinceDays: opts.sinceDays ?? 7 });
   } catch {
     return { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
   }

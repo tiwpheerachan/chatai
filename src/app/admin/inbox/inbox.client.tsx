@@ -85,6 +85,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const [brandSel, setBrandSel] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [threadLoading, setThreadLoading] = useState(false);
+  const [hydrating, setHydrating] = useState(false);
   const [draft, setDraft] = useState('');
   const [macros, setMacros] = useState<Macro[]>([]);
   const [sending, setSending] = useState(false);
@@ -133,10 +134,19 @@ export function InboxClient({ userId }: { userId: string }) {
 
   useEffect(() => {
     if (!activeId) return;
-    setThreadLoading(true);
-    // Single load. The server hydrates from the platform only the first time (when
-    // just the preview is stored), then persists — so re-opening is instant from DB.
-    loadThread(activeId).finally(() => { if (activeId === activeIdRef.current) setThreadLoading(false); });
+    const id = activeId;
+    setThreadLoading(true); setHydrating(false);
+    // 1) Instant: render from the DB right away (no blocking upstream fetch).
+    loadThread(id).then((d: any) => {
+      if (id !== activeIdRef.current) return;
+      setThreadLoading(false);
+      // 2) If only the preview is stored, pull the full history in the BACKGROUND
+      //    (thread already visible; fills in a moment). Persisted → next open instant.
+      if (((d && d.messages) || []).length <= 1) {
+        setHydrating(true);
+        loadThread(id, { live: true }).finally(() => { if (id === activeIdRef.current) setHydrating(false); });
+      }
+    });
   }, [activeId, loadThread]);
 
   // Open a conversation with an instant optimistic shell (header + profile from the
@@ -478,6 +488,13 @@ export function InboxClient({ userId }: { userId: string }) {
             </div>
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin px-6 py-4 space-y-3">
+              {hydrating && (
+                <div className="sticky top-0 z-10 flex justify-center">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 bg-white/90 border border-slate-200 rounded-full px-2.5 py-1 shadow-sm">
+                    <Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลดประวัติแชท…
+                  </span>
+                </div>
+              )}
               {threadLoading && !(active.messages || []).length && (
                 <div className="space-y-3 animate-pulse">
                   <div className="flex justify-start"><div className="h-9 w-48 rounded-2xl bg-slate-200" /></div>
