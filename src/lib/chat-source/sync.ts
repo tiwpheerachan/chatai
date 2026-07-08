@@ -440,7 +440,9 @@ export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number
   // Recent-first: each visit re-seeks to the last few days and walks to the newest,
   // so the latest chats are always present (up to 40 pages ≈ 800 recent convs).
   try {
-    return await syncShop(shopId, { reseekDays: opts.reseekDays ?? 4, maxPages: opts.maxPages ?? 40 });
+    // 1-day window: high-volume shops (anker ~8 convs/hr) still reach "now" within
+    // ~10 pages, so the newest chats are captured every visit.
+    return await syncShop(shopId, { reseekDays: opts.reseekDays ?? 1, maxPages: opts.maxPages ?? 40 });
   } catch {
     return { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
   }
@@ -454,7 +456,7 @@ export async function syncAllShops(opts: { maxPagesPerShop?: number; sinceDays?:
   const results: SyncShopResult[] = [];
   for (const s of shops || []) {
     try {
-      results.push(await syncShop(s.shop_id, { reseekDays: opts.reseekDays ?? 2, maxPages: opts.maxPagesPerShop ?? 4 }));
+      results.push(await syncShop(s.shop_id, { reseekDays: opts.reseekDays ?? 1, maxPages: opts.maxPagesPerShop ?? 12 }));
     } catch (e) {
       results.push({ shop_id: s.shop_id, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 });
     }
