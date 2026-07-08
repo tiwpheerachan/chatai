@@ -537,12 +537,16 @@ export async function backfillShops(
 ): Promise<SyncShopResult[]> {
   const sb = createAdminClient();
   const nShops = opts.shops ?? 3;
+  // Order by sync_cursor ASC = the shop FURTHEST back in its backfill goes first
+  // (least-covered wins). NOT last_synced_at — the recent sweep bumps that for
+  // every shop each tick, so it can't rank backfill progress. Cursor advances only
+  // as a shop backfills, so this rotates cleanly through all shops by progress.
   const { data: shops } = await sb
     .from('chat_shops')
     .select('shop_id')
     .eq('platform', 'shopee')
     .eq('caught_up', false)
-    .order('last_synced_at', { ascending: true, nullsFirst: true })
+    .order('sync_cursor', { ascending: true, nullsFirst: true })
     .limit(nShops);
 
   const results: SyncShopResult[] = [];
@@ -551,11 +555,13 @@ export async function backfillShops(
       // reseekDays omitted → BACKFILL mode: uses + persists the shop's sync_cursor.
       results.push(await syncShop(s.shop_id, { maxPages: opts.maxPagesPerShop ?? 15, sinceDays: opts.sinceDays ?? 90 }));
     } catch {
+      // A shop that can't be read (e.g. toptoy's broken token) would otherwise stay
+      // the lowest sync_cursor forever and wedge the rotation — retire it from the
+      // backfill pool (recent sweep still covers it; re-running the reseed re-includes
+      // it once the token is fixed).
       results.push({ shop_id: s.shop_id, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 });
+      await sb.from('chat_shops').update({ caught_up: true }).eq('shop_id', s.shop_id);
     }
-    // Always advance last_synced_at so a shop that errors (e.g. toptoy's broken
-    // token) can't wedge the rotation by staying the stalest pick forever.
-    await sb.from('chat_shops').update({ last_synced_at: new Date().toISOString() }).eq('shop_id', s.shop_id);
   }
   return results;
 }
