@@ -565,7 +565,7 @@ export function InboxClient({ userId }: { userId: string }) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Filter toolbar */}
-      <div className="bg-white border-b border-slate-200 px-4 py-2 flex flex-col gap-1.5">
+      <div className="bg-white/60 supports-[backdrop-filter]:bg-white/50 backdrop-blur-2xl border-b border-white/60 px-4 py-2 flex flex-col gap-1.5">
         {/* Row 1: search + status */}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative w-56">

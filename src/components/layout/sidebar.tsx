@@ -69,7 +69,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0">
+    <aside className="w-64 bg-white/55 supports-[backdrop-filter]:bg-white/45 backdrop-blur-2xl border-r border-white/60 flex flex-col h-screen sticky top-0">
       <div className="px-4 py-4">
         <Wordmark size={56} />
       </div>

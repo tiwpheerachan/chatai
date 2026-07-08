@@ -7,7 +7,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!ctx) redirect('/login');
 
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-screen bg-gradient-to-br from-indigo-50 via-slate-50 to-fuchsia-50/70">
       <Sidebar
         user={{ name: ctx.name, email: ctx.email, avatar: ctx.avatarUrl, role: ctx.role }}
         permissions={ctx.permissions}
