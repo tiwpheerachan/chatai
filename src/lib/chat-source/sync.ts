@@ -418,34 +418,38 @@ export async function ingestConversation(shopId: string, extConvId: string): Pro
   return { ok: true, conversation_id: dbConvId, messages: inserted };
 }
 
-// Round-robin state for the lightweight in-process scheduler: sync ONE shop per
-// tick so a constrained instance (Render Starter 512MB) never gets overloaded by
-// a full 17-shop sweep at once.
-let _rrIndex = 0;
-let _rrShops: string[] = [];
+let _rrTicks = 0;
 
-/** Sync just the NEXT shop in rotation (light — for the in-process scheduler). */
+/**
+ * Sync the STALEST shop (oldest last_synced_at) recent-first. Staleness-based
+ * selection (from the DB, not an in-memory index) survives server restarts/deploys
+ * and always prioritizes the shop that's furthest behind — so no shop gets starved
+ * and the broken-token shop (toptoy) can't wedge the rotation.
+ */
 export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number; reseekDays?: number } = {}): Promise<SyncShopResult | null> {
   const sb = createAdminClient();
-  // Refresh the shop directory once per full cycle.
-  if (_rrIndex <= 0 || _rrShops.length === 0) {
-    try { await syncShops(); } catch { /* keep going with cached list */ }
-    const { data } = await sb.from('chat_shops').select('shop_id').eq('platform', 'shopee');
-    _rrShops = (data || []).map((r: any) => String(r.shop_id));
-    _rrIndex = 0;
-  }
-  if (!_rrShops.length) return null;
-  const shopId = _rrShops[_rrIndex % _rrShops.length];
-  _rrIndex = (_rrIndex + 1) % _rrShops.length;
-  // Recent-first: each visit re-seeks to the last few days and walks to the newest,
-  // so the latest chats are always present (up to 40 pages ≈ 800 recent convs).
+  // Refresh the shop directory occasionally (rarely changes).
+  if (_rrTicks % 20 === 0) { try { await syncShops(); } catch { /* use existing */ } }
+  _rrTicks++;
+
+  const { data } = await sb
+    .from('chat_shops').select('shop_id')
+    .eq('platform', 'shopee')
+    .order('last_synced_at', { ascending: true, nullsFirst: true })
+    .limit(1);
+  const shopId = data?.[0]?.shop_id ? String(data[0].shop_id) : null;
+  if (!shopId) return null;
+
+  let result: SyncShopResult | null = null;
   try {
-    // 1-day window: high-volume shops (anker ~8 convs/hr) still reach "now" within
-    // ~10 pages, so the newest chats are captured every visit.
-    return await syncShop(shopId, { reseekDays: opts.reseekDays ?? 1, maxPages: opts.maxPages ?? 40 });
+    result = await syncShop(shopId, { reseekDays: opts.reseekDays ?? 1, maxPages: opts.maxPages ?? 40 });
   } catch {
-    return { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
+    result = { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
   }
+  // Always advance last_synced_at (even if the sync errored before its own update),
+  // so the rotation moves on instead of re-picking the same failing shop forever.
+  await sb.from('chat_shops').update({ last_synced_at: new Date().toISOString() }).eq('shop_id', shopId);
+  return result;
 }
 
 /** Sync every shop, recent-first (grab the newest chats), for the manual "ซิงค์" button + cron endpoint. */
