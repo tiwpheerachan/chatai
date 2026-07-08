@@ -4,47 +4,43 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
-import { cn, type IconComponent } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { matchPermission } from '@/lib/permissions';
 import { ROLE_LABELS } from '@/lib/rbac';
 import { Avatar } from '@/components/ui/avatar';
 import { Wordmark } from '@/components/ui/logo';
+import { Fi } from '@/components/ui/fi';
 import type { UserRole } from '@/types/database';
-import {
-  SquaresFour, ChatCircleDots, CloudArrowDown, UsersThree, BookOpenText, Robot,
-  Lightning, ChartLineUp, ShieldCheck, Plugs, ClipboardText, GearSix,
-  UserGear, SignOut,
-} from '@phosphor-icons/react/dist/ssr';
 
-interface NavItem { href: string; label: string; icon: IconComponent; perm?: string | string[] }
+interface NavItem { href: string; label: string; icon: string; perm?: string | string[] }
 interface NavGroup { title: string; items: NavItem[] }
 
 const NAV: NavGroup[] = [
   {
     title: 'งานหลัก',
     items: [
-      { href: '/admin/dashboard', label: 'Dashboard', icon: SquaresFour },
-      { href: '/admin/inbox', label: 'Unified Inbox', icon: ChatCircleDots, perm: 'chat.read' },
-      { href: '/admin/chat-import', label: 'ดึงแชท TikTok', icon: CloudArrowDown, perm: 'chat.read' },
-      { href: '/admin/customers', label: 'ลูกค้า', icon: UsersThree, perm: 'chat.read' },
+      { href: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
+      { href: '/admin/inbox', label: 'Unified Inbox', icon: 'comment-dots', perm: 'chat.read' },
+      { href: '/admin/chat-import', label: 'ดึงแชท TikTok', icon: 'cloud-download', perm: 'chat.read' },
+      { href: '/admin/customers', label: 'ลูกค้า', icon: 'users', perm: 'chat.read' },
     ],
   },
   {
     title: 'AI & เนื้อหา',
     items: [
-      { href: '/admin/knowledge-base', label: 'Knowledge Base', icon: BookOpenText, perm: 'kb.read' },
-      { href: '/admin/ai-bot', label: 'AI Bot', icon: Robot, perm: 'kb.read' },
-      { href: '/admin/macros', label: 'Macros', icon: Lightning, perm: 'macro.read' },
+      { href: '/admin/knowledge-base', label: 'Knowledge Base', icon: 'book-alt', perm: 'kb.read' },
+      { href: '/admin/ai-bot', label: 'AI Bot', icon: 'robot', perm: 'kb.read' },
+      { href: '/admin/macros', label: 'Macros', icon: 'bolt', perm: 'macro.read' },
     ],
   },
   {
     title: 'ระบบ',
     items: [
-      { href: '/admin/analytics', label: 'Analytics', icon: ChartLineUp, perm: ['analytics.read', 'analytics.own'] },
-      { href: '/admin/team', label: 'ทีม & สิทธิ์', icon: ShieldCheck, perm: 'team.read' },
-      { href: '/admin/channels', label: 'ช่องทาง', icon: Plugs, perm: 'channel.read' },
-      { href: '/admin/audit-log', label: 'Audit Log', icon: ClipboardText, perm: 'team.read' },
-      { href: '/admin/settings', label: 'ตั้งค่า', icon: GearSix, perm: 'team.read' },
+      { href: '/admin/analytics', label: 'Analytics', icon: 'chart-line-up', perm: ['analytics.read', 'analytics.own'] },
+      { href: '/admin/team', label: 'ทีม & สิทธิ์', icon: 'shield-check', perm: 'team.read' },
+      { href: '/admin/channels', label: 'ช่องทาง', icon: 'plug-connection', perm: 'channel.read' },
+      { href: '/admin/audit-log', label: 'Audit Log', icon: 'clipboard-list', perm: 'team.read' },
+      { href: '/admin/settings', label: 'ตั้งค่า', icon: 'settings', perm: 'team.read' },
     ],
   },
 ];
@@ -87,7 +83,6 @@ export function Sidebar({
               <div className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-300">{group.title}</div>
               {items.map((it, idx) => {
                 const active = pathname === it.href || pathname.startsWith(it.href + '/');
-                const Icon = it.icon;
                 return (
                   <motion.div
                     key={it.href}
@@ -115,10 +110,9 @@ export function Sidebar({
                         'relative z-10 flex items-center justify-center shrink-0 w-7 h-7 rounded-lg transition-colors',
                         active ? 'bg-white/15' : 'bg-slate-100 group-hover/nav:bg-slate-200',
                       )}>
-                        <Icon
-                          size={17}
-                          weight="fill"
-                          className={cn('transition-colors', active ? 'text-white' : 'text-slate-500 group-hover/nav:text-slate-700')}
+                        <Fi
+                          name={it.icon}
+                          className={cn('text-[15px] transition-colors', active ? 'text-white' : 'text-slate-500 group-hover/nav:text-slate-700')}
                         />
                       </span>
                       <span className={cn(
@@ -146,10 +140,10 @@ export function Sidebar({
             </div>
           </Link>
           <Link href="/admin/profile" className="p-1.5 text-slate-400 hover:text-brand-600" title="โปรไฟล์">
-            <UserGear size={18} weight="duotone" />
+            <Fi name="user-gear" className="text-lg" />
           </Link>
           <button onClick={signOut} className="p-1.5 text-slate-400 hover:text-rose-600" title="ออกจากระบบ">
-            <SignOut size={18} weight="duotone" />
+            <Fi name="sign-out-alt" className="text-lg" />
           </button>
         </div>
       </div>

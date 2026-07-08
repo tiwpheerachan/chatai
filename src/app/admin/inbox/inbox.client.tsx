@@ -130,6 +130,9 @@ export function InboxClient({ userId }: { userId: string }) {
   const [panelW, setPanelW] = useState(360);
   const [panelTab, setPanelTab] = useState<'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('orders');
   const panelWRef = useRef(360);
+  const [listW, setListW] = useState(320);
+  const listWRef = useRef(320);
+  const listElRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -158,10 +161,33 @@ export function InboxClient({ userId }: { userId: string }) {
 
   const userName = useCallback((id: string | null | undefined) => (id ? team.find(u => u.id === id)?.name || null : null), [team]);
 
-  // Restore the saved panel width once on mount.
+  // Restore saved column widths once on mount.
   useEffect(() => {
     const s = Number(localStorage.getItem('inboxPanelW'));
     if (s >= 300 && s <= 680) { setPanelW(s); panelWRef.current = s; }
+    const l = Number(localStorage.getItem('inboxListW'));
+    if (l >= 260 && l <= 560) { setListW(l); listWRef.current = l; }
+  }, []);
+  // Drag the chat-list column's right edge to resize it.
+  const startListResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const left = listElRef.current?.getBoundingClientRect().left ?? 256;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.min(560, Math.max(260, ev.clientX - left));
+      listWRef.current = w;
+      setListW(w);
+    };
+    const onUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      localStorage.setItem('inboxListW', String(Math.round(listWRef.current)));
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   }, []);
   // Drag the panel's left edge to resize (panel is right-docked, so width grows as
   // the cursor moves left). Clamped, persisted to localStorage on release.
@@ -599,8 +625,11 @@ export function InboxClient({ userId }: { userId: string }) {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Conversation list */}
-        <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
+        {/* Conversation list — resizable */}
+        <div ref={listElRef} className="bg-white border-r border-slate-200 flex flex-col shrink-0 relative" style={{ width: listW }}>
+          {/* Drag handle on the right edge */}
+          <div onMouseDown={startListResize} title="ลากเพื่อปรับความกว้าง"
+            className="absolute right-0 top-0 h-full w-1.5 -mr-1 cursor-col-resize z-20 hover:bg-indigo-400/40 active:bg-indigo-500/50" />
           <div className="flex-1 overflow-y-auto scroll-thin">
           {filtered.map(c => {
             const on = activeId === c.id;

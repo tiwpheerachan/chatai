@@ -3,8 +3,8 @@ import '@flaticon/flaticon-uicons/css/regular/rounded.css'; // app-wide icon sty
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Sigmachat — ศูนย์รวมแชททุกแพลตฟอร์ม',
-  description: 'Sigmachat — Unified AI customer support across LINE, Facebook, Instagram, Shopee, TikTok, Lazada, WhatsApp, Web',
+  title: 'Nexus — ศูนย์รวมแชททุกแพลตฟอร์ม',
+  description: 'Nexus — Unified customer support across LINE, Facebook, Instagram, Shopee, TikTok, Lazada, WhatsApp, Web',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
