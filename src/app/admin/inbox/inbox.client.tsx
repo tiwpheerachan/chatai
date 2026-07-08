@@ -5,8 +5,9 @@ import { createClient } from '@/lib/supabase/client';
 import { CHANNEL_META, PLATFORM_CHANNELS, brandIcon, cn } from '@/lib/utils';
 import { ChannelIcon } from '@/components/ui/channel-icon';
 import { Avatar } from '@/components/ui/avatar';
+import { Fi } from '@/components/ui/fi';
 import { AnimatedChat, AnimatedInbox, AnimatedAI, AnimatedRobot } from '@/components/ui/animated-icons';
-import { Search, Send, Bot, Check, Paperclip, Image as ImageIcon, CreditCard, RefreshCw, X, Loader2, StickyNote, Pin, ListChecks, UserPlus, Sparkles, Ticket, Plus, Trash2, ChevronDown } from 'lucide-react';
+import { Search, Send, Bot, Check, Paperclip, Image as ImageIcon, CreditCard, RefreshCw, X, Loader2, StickyNote, Pin, ListChecks, UserPlus, Ticket, Plus, Trash2, ChevronDown } from 'lucide-react';
 import type { Conversation, Message, MessageAttachment, Macro } from '@/types/database';
 
 const BRANDS = [
@@ -124,6 +125,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [newTask, setNewTask] = useState('');
   const [recProds, setRecProds] = useState<any[] | null>(null);
+  const [panelProdQ, setPanelProdQ] = useState('');
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
   const [panelTab, setPanelTab] = useState<'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('orders');
@@ -241,18 +243,28 @@ export function InboxClient({ userId }: { userId: string }) {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
     setBuyerOrders(null); setOrdersLoading(true);
-    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false);
+    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false); setPanelProdQ('');
     fetch(`/api/conversations/${id}/orders`)
       .then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setBuyerOrders({ list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched }); })
       .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
       .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
     loadTasks(id);
-    // Recommended products (best-sellers of this shop) for one-click sending.
+    // Recommended products (best-sellers of this shop) for the สินค้า tab.
     fetch(`/api/conversations/${id}/products`).then(r => r.json())
-      .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products.slice(0, 6) : []); })
+      .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
       .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
   }, [activeId, loadTasks]);
+
+  // สินค้า tab search — empty query = best-sellers / all.
+  const searchPanelProds = useCallback((q: string) => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    setRecProds(null);
+    fetch(`/api/conversations/${id}/products?q=${encodeURIComponent(q)}`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
+      .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
+  }, []);
 
   // Open a conversation with an instant optimistic shell (header + profile from the
   // list row) so the UI responds immediately while the full thread loads.
@@ -901,18 +913,19 @@ export function InboxClient({ userId }: { userId: string }) {
           {/* Tab bar */}
           <div className="flex border-b border-slate-200 shrink-0 text-[11px] font-medium overflow-x-auto scroll-thin">
             {([
-              { key: 'info', label: 'ข้อมูล', icon: null, badge: 0 },
-              { key: 'orders', label: 'ออเดอร์', icon: CreditCard, badge: buyerOrders?.list.length || 0 },
-              { key: 'products', label: 'สินค้า', icon: Sparkles, badge: 0 },
-              { key: 'tasks', label: 'งาน', icon: ListChecks, badge: tasks.filter((t: any) => !t.done).length },
-              { key: 'coupon', label: 'คูปอง', icon: Ticket, badge: 0 },
+              { key: 'info', label: 'ข้อมูล', icon: 'user', badge: 0 },
+              { key: 'orders', label: 'ออเดอร์', icon: 'shopping-bag', badge: buyerOrders?.list.length || 0 },
+              { key: 'products', label: 'สินค้า', icon: 'box-open', badge: 0 },
+              { key: 'tasks', label: 'งาน', icon: 'list-check', badge: tasks.filter((t: any) => !t.done).length },
+              { key: 'coupon', label: 'คูปอง', icon: 'ticket', badge: 0 },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setPanelTab(t.key)}
-                className={cn('flex-1 min-w-[56px] px-1 py-2 flex flex-col items-center gap-0.5 border-b-2 -mb-px whitespace-nowrap',
+                className={cn('flex-1 min-w-[56px] px-1 py-2 flex flex-col items-center gap-1 border-b-2 -mb-px whitespace-nowrap',
                   panelTab === t.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700')}>
+                <Fi name={t.icon} className="text-[15px]" />
                 <span className="flex items-center gap-1">
-                  {t.icon && <t.icon className="w-3.5 h-3.5" />}{t.label}
-                  {t.badge > 0 && <span className="ml-0.5 rounded-full bg-slate-200 text-slate-600 text-[9px] px-1 leading-4">{t.badge}</span>}
+                  {t.label}
+                  {t.badge > 0 && <span className="rounded-full bg-slate-200 text-slate-600 text-[9px] px-1 leading-4">{t.badge}</span>}
                 </span>
               </button>
             ))}
@@ -1025,27 +1038,43 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'products' && (
               <div className="p-4 space-y-2 text-xs">
-                <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">สินค้าแนะนำ (ขายดี)</span></div>
+                {/* Search the whole catalog; empty = best-sellers */}
+                <div className="flex items-center gap-1">
+                  <div className="relative flex-1">
+                    <Fi name="search" className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[13px]" />
+                    <input value={panelProdQ} onChange={e => setPanelProdQ(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') searchPanelProds(panelProdQ); }}
+                      placeholder="ค้นหาสินค้า / SKU…" className="w-full border border-slate-200 rounded-lg pl-7 pr-2 py-1.5 text-[11px]" />
+                  </div>
+                  <button onClick={() => searchPanelProds(panelProdQ)} className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white">ค้นหา</button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-semibold">{panelProdQ.trim() ? `ผลการค้นหา “${panelProdQ.trim()}”` : 'สินค้าขายดี'}</span>
+                  {panelProdQ.trim() && <button onClick={() => { setPanelProdQ(''); searchPanelProds(''); }} className="text-[10px] text-indigo-600 hover:underline">ดูขายดีทั้งหมด</button>}
+                </div>
                 {recProds === null ? (
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
                 ) : recProds.length > 0 ? (
                   <div className="space-y-1">
                     {recProds.map((p: any) => (
-                      <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
-                        className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
+                      <div key={p.item_id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:border-indigo-300 hover:bg-indigo-50/40">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        {p.image_url ? <img src={p.image_url} alt="" className="w-9 h-9 rounded object-cover shrink-0" /> : <div className="w-9 h-9 rounded bg-slate-100 shrink-0" />}
+                        {p.image_url ? <button type="button" onClick={() => setLightbox(p.image_url)} className="shrink-0 cursor-zoom-in"><img src={p.image_url} alt="" className="w-10 h-10 rounded object-cover" /></button> : <div className="w-10 h-10 rounded bg-slate-100 shrink-0" />}
                         <div className="min-w-0 flex-1">
-                          <div className="text-[11px] text-slate-800 line-clamp-2">{p.item_name}</div>
-                          <div className="text-[10px]"><span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>{p.in_stock ? '' : ' · หมด'}</div>
+                          <div className="text-[11px] text-slate-800 line-clamp-2 leading-tight">{p.item_name}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+                            <span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>
+                            {p.original_price > p.price && <span className="text-slate-400 line-through">฿{Number(p.original_price).toLocaleString()}</span>}
+                            <span className={cn('rounded px-1 py-0.5 font-medium', p.in_stock ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>{p.in_stock ? `สต็อก ${p.stock}` : 'หมด'}</span>
+                          </div>
                         </div>
-                        <Send className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                      </button>
+                        <button onClick={() => sendItemCard(p.item_id)} disabled={sending} title="ส่งการ์ดสินค้านี้ให้ลูกค้า"
+                          className="shrink-0 p-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-50"><Fi name="paper-plane" className="text-[12px]" /></button>
+                      </div>
                     ))}
-                    <div className="text-[10px] text-slate-400 pt-1">กดเพื่อส่งการ์ดสินค้าให้ลูกค้า · ค้นหาสินค้าอื่นได้ที่ 📎 การ์ดสินค้า</div>
                   </div>
                 ) : (
-                  <div className="text-[11px] text-slate-400">ไม่มีข้อมูลสินค้าสำหรับร้านนี้</div>
+                  <div className="text-[11px] text-slate-400">{panelProdQ.trim() ? 'ไม่พบสินค้าตามคำค้น' : 'ไม่มีข้อมูลสินค้าสำหรับร้านนี้'}</div>
                 )}
               </div>
             )}

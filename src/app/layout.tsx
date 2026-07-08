@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import '@flaticon/flaticon-uicons/css/regular/rounded.css'; // app-wide icon style (fi fi-rr-*)
 import './globals.css';
 
 export const metadata: Metadata = {
