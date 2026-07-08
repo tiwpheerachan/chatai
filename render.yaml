@@ -3,7 +3,11 @@ services:
     name: sigmachat
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run build
+    # --include=dev is required: NODE_ENV=production (below) makes npm skip
+    # devDependencies, but the build needs typescript/tailwindcss/postcss/@types
+    # (all devDeps). Without them Next can't read the tsconfig "@/" path alias
+    # → "Module not found: @/...". Installing dev deps fixes the build.
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
