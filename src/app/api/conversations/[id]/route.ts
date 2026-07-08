@@ -18,7 +18,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
   const { data: c } = await sb
     .from('conversations')
-    .select('*, customer:customers(*), brand:brands(name,slug,color)')
+    .select('*, customer:customers(*), brand:brands(name,slug,color), assignee:profiles!conversations_assigned_to_fkey(id,name)')
     .eq('id', params.id)
     .maybeSingle();
   if (!c) return NextResponse.json({ error: 'Not found' }, { status: 404 });

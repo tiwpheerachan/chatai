@@ -62,6 +62,7 @@ export interface Conversation {
   priority: ConversationPriority;
   assigned_to: string | null;
   ai_handling: boolean;
+  pinned?: boolean;
   unread: number;
   tags: string[];
   sla_due_at: string | null;
@@ -82,6 +83,8 @@ export interface Conversation {
   brand_name?: string | null;
   brand_slug?: string | null;
   brand_color?: string | null;
+  assignee?: { id: string; name: string | null } | null;
+  assignee_name?: string | null;
 }
 
 export type MessageAttachment =

@@ -146,4 +146,5 @@ export const conversationPatchSchema = z.object({
   assigned_to: uuid.nullish(),
   ai_handling: z.boolean().optional(),
   tags: z.array(z.string().max(50)).max(50).optional(),
+  pinned: z.boolean().optional(),
 }).strict();

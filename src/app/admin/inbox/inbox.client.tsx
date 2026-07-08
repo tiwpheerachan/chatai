@@ -6,7 +6,7 @@ import { CHANNEL_META, PLATFORM_CHANNELS, brandIcon, cn } from '@/lib/utils';
 import { ChannelIcon } from '@/components/ui/channel-icon';
 import { Avatar } from '@/components/ui/avatar';
 import { AnimatedChat, AnimatedInbox, AnimatedAI, AnimatedRobot } from '@/components/ui/animated-icons';
-import { Search, Send, Bot, ArrowLeftRight, Check, Paperclip, Image as ImageIcon, CreditCard, RefreshCw, X, Loader2, StickyNote } from 'lucide-react';
+import { Search, Send, Bot, Check, Paperclip, Image as ImageIcon, CreditCard, RefreshCw, X, Loader2, StickyNote, Pin, ListChecks, UserPlus, Sparkles, Ticket, Plus, Trash2, ChevronDown } from 'lucide-react';
 import type { Conversation, Message, MessageAttachment, Macro } from '@/types/database';
 
 const BRANDS = [
@@ -118,6 +118,12 @@ export function InboxClient({ userId }: { userId: string }) {
   const [prodQ, setProdQ] = useState('');
   const [prods, setProds] = useState<any[] | null>(null);
   const [prodLoading, setProdLoading] = useState(false);
+  // Team (for assignment), tasks (ใบสั่งงาน), recommended products (panel).
+  const [team, setTeam] = useState<{ id: string; name: string }[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [newTask, setNewTask] = useState('');
+  const [recProds, setRecProds] = useState<any[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -141,7 +147,10 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     loadConvos();
     fetch('/api/macros').then(r => r.json()).then(setMacros).catch(() => {});
+    fetch('/api/users').then(r => r.json()).then(d => setTeam(Array.isArray(d) ? d.map((u: any) => ({ id: u.id, name: u.name || u.email })) : [])).catch(() => {});
   }, [loadConvos]);
+
+  const userName = useCallback((id: string | null | undefined) => (id ? team.find(u => u.id === id)?.name || null : null), [team]);
 
   // Track the currently-selected conversation so late-arriving fetches (from a
   // previous conversation's request or a poll) never overwrite the open thread.
@@ -191,17 +200,28 @@ export function InboxClient({ userId }: { userId: string }) {
 
   // Load the buyer's real order history when a conversation opens (Shopee only,
   // lazy — never blocks the thread). Cleared per open so panels don't cross-bleed.
+  const loadTasks = useCallback((id: string) => {
+    fetch(`/api/conversations/${id}/tasks`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setTasks(Array.isArray(d?.tasks) ? d.tasks : []); })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
-    if (!activeId) { setBuyerOrders(null); return; }
+    if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
     setBuyerOrders(null); setOrdersLoading(true);
-    setProds(null); setProdQ('');
+    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false);
     fetch(`/api/conversations/${id}/orders`)
       .then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setBuyerOrders({ list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched }); })
       .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
       .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
-  }, [activeId]);
+    loadTasks(id);
+    // Recommended products (best-sellers of this shop) for one-click sending.
+    fetch(`/api/conversations/${id}/products`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products.slice(0, 6) : []); })
+      .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
+  }, [activeId, loadTasks]);
 
   // Open a conversation with an instant optimistic shell (header + profile from the
   // list row) so the UI responds immediately while the full thread loads.
@@ -332,6 +352,48 @@ export function InboxClient({ userId }: { userId: string }) {
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งการ์ดไม่สำเร็จ'); }
       else { setCardForm(null); setProds(null); setProdQ(''); setCardVal(''); setAttachOpen(false); refreshActive(); }
     } finally { setSending(false); }
+  };
+
+  // Pin / assign — write via the conversation PATCH, then reflect locally + refresh list.
+  const patchConvo = async (patch: Record<string, unknown>) => {
+    if (!active) return;
+    const id = active.id;
+    setActive(prev => (prev && prev.id === id ? { ...prev, ...patch } as any : prev));
+    await fetch(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => {});
+    loadConvos();
+  };
+  const togglePin = () => patchConvo({ pinned: !(active as any)?.pinned });
+  const assignTo = async (uid: string | null) => {
+    setAssignOpen(false);
+    if (!active) return;
+    const id = active.id;
+    setActive(prev => (prev && prev.id === id ? { ...prev, assigned_to: uid, assignee: uid ? { id: uid, name: userName(uid) } : null } as any : prev));
+    await fetch(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assigned_to: uid }) }).catch(() => {});
+    loadConvos();
+  };
+
+  // Tasks (ใบสั่งงาน)
+  const addTask = async () => {
+    const title = newTask.trim();
+    if (!title || !active) return;
+    setNewTask('');
+    const r = await fetch(`/api/conversations/${active.id}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+    });
+    if (r.ok && active) loadTasks(active.id);
+  };
+  const toggleTask = async (taskId: string, done: boolean) => {
+    if (!active) return;
+    setTasks(ts => ts.map(t => (t.id === taskId ? { ...t, done } : t)));
+    await fetch(`/api/conversations/${active.id}/tasks`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task_id: taskId, done }),
+    }).catch(() => {});
+    loadTasks(active.id);
+  };
+  const deleteTask = async (taskId: string) => {
+    if (!active) return;
+    setTasks(ts => ts.filter(t => t.id !== taskId));
+    await fetch(`/api/conversations/${active.id}/tasks?task_id=${taskId}`, { method: 'DELETE' }).catch(() => {});
   };
 
   const runSync = useCallback(async (opts: { silent?: boolean; maxPages?: number } = {}) => {
@@ -513,7 +575,10 @@ export function InboxClient({ userId }: { userId: string }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center gap-2">
-                      <span className={cn('text-sm truncate', unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800')}>{c.customer_name || '-'}</span>
+                      <span className={cn('text-sm truncate flex items-center gap-1', unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800')}>
+                        {(c as any).pinned && <Pin className="w-3 h-3 fill-amber-500 text-amber-500 shrink-0" />}
+                        <span className="truncate">{c.customer_name || '-'}</span>
+                      </span>
                       <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(c.last_message_at)}</span>
                     </div>
                     <div className="flex justify-between items-center gap-2 mt-0.5">
@@ -525,6 +590,7 @@ export function InboxClient({ userId }: { userId: string }) {
                       {c.priority === 'high' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วน</span>}
                       {c.priority === 'urgent' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วนมาก</span>}
                       {c.ai_handling && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-violet-100 text-violet-700 font-semibold"><Bot className="w-2.5 h-2.5" /> AI</span>}
+                      {c.assignee_name && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-slate-100 text-slate-600 font-medium truncate max-w-[80px]"><UserPlus className="w-2.5 h-2.5 shrink-0" />{c.assignee_name}</span>}
                     </div>
                   </div>
                 </div>
@@ -555,13 +621,43 @@ export function InboxClient({ userId }: { userId: string }) {
                       <ChannelIcon channel={active.channel} size="xs" /> {CHANNEL_META[active.channel]?.name}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500">สถานะ: {active.status} · ความสำคัญ: {active.priority}</div>
+                  <div className="text-xs text-slate-500">
+                    สถานะ: {active.status} · ความสำคัญ: {active.priority}
+                    {(active as any).assignee?.name || userName(active.assigned_to)
+                      ? <> · ผู้ดูแล: <span className="font-medium text-slate-700">{(active as any).assignee?.name || userName(active.assigned_to)}</span></>
+                      : <> · <span className="text-amber-600">ยังไม่มีผู้ดูแล</span></>}
+                  </div>
                 </div>
               </div>
               <div className="flex gap-1.5">
-                <button className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
-                  <ArrowLeftRight className="w-3.5 h-3.5" />โอน
+                {/* Pin */}
+                <button onClick={togglePin} title={(active as any).pinned ? 'เลิกปักหมุด' : 'ปักหมุดแชทนี้'}
+                  className={cn('px-2.5 py-1.5 text-xs rounded-lg border flex items-center gap-1.5',
+                    (active as any).pinned ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 hover:bg-slate-50')}>
+                  <Pin className={cn('w-3.5 h-3.5', (active as any).pinned && 'fill-amber-500')} />{(active as any).pinned ? 'ปักหมุดแล้ว' : 'ปักหมุด'}
                 </button>
+                {/* Assign */}
+                <div className="relative">
+                  <button onClick={() => setAssignOpen(o => !o)}
+                    className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
+                    <UserPlus className="w-3.5 h-3.5" />
+                    {(active as any).assignee?.name || userName(active.assigned_to) || 'มอบหมาย'}
+                    <ChevronDown className="w-3 h-3 opacity-60" />
+                  </button>
+                  {assignOpen && (
+                    <div className="absolute right-0 top-10 z-20 w-52 max-h-72 overflow-y-auto scroll-thin bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-sm">
+                      <button onClick={() => assignTo(userId)} className="w-full text-left px-3 py-2 hover:bg-indigo-50 font-medium text-indigo-700">ฉันรับเคสนี้เอง</button>
+                      {active.assigned_to && <button onClick={() => assignTo(null)} className="w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-500">เอาผู้ดูแลออก</button>}
+                      <div className="border-t border-slate-100 my-1" />
+                      {team.map(u => (
+                        <button key={u.id} onClick={() => assignTo(u.id)}
+                          className={cn('w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between', active.assigned_to === u.id && 'bg-slate-50 font-medium')}>
+                          {u.name}{active.assigned_to === u.id && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button onClick={close} className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
                   <Check className="w-3.5 h-3.5" />ปิดเคส
                 </button>
@@ -812,9 +908,21 @@ export function InboxClient({ userId }: { userId: string }) {
                       <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
                     </div>
                     {(o.items || []).map((it: any, i: number) => (
-                      <div key={i} className="text-slate-700 leading-tight">
-                        <span className="line-clamp-2">{it.item_name}</span>
-                        <span className="text-slate-400">{it.model_name ? ` · ${it.model_name}` : ''} × {it.quantity}</span>
+                      <div key={i} className="flex gap-2 items-start">
+                        {it.image_url
+                          // eslint-disable-next-line @next/next/no-img-element
+                          ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button>
+                          : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><CreditCard className="w-4 h-4 text-slate-300" /></div>}
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
+                          <div className="text-slate-400">{it.model_name ? `${it.model_name} · ` : ''}× {it.quantity}</div>
+                          {it.item_id && (
+                            <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
+                              className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
+                              <Send className="w-2.5 h-2.5" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                     <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
@@ -846,6 +954,64 @@ export function InboxClient({ userId }: { userId: string }) {
                   </a>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Work-order tasks (ใบสั่งงาน) — internal follow-ups for this chat */}
+          {active.channel === 'shopee' && (
+            <div className="p-4 space-y-2 text-xs border-b border-slate-100">
+              <div className="flex items-center gap-1.5"><ListChecks className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ใบสั่งงาน</span></div>
+              <div className="flex items-center gap-1">
+                <input value={newTask} onChange={e => setNewTask(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
+                  placeholder="เพิ่มงานที่ต้องทำต่อ…" className="flex-1 border border-slate-200 rounded-md px-2 py-1 text-[11px]" />
+                <button onClick={addTask} className="p-1 rounded-md bg-indigo-600 text-white"><Plus className="w-3.5 h-3.5" /></button>
+              </div>
+              {tasks.length > 0 && (
+                <div className="space-y-1">
+                  {tasks.map((t: any) => (
+                    <div key={t.id} className="flex items-start gap-1.5 group">
+                      <button onClick={() => toggleTask(t.id, !t.done)} className={cn('mt-0.5 w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center', t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300')}>
+                        {t.done && <Check className="w-2.5 h-2.5" />}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <div className={cn('leading-tight', t.done ? 'line-through text-slate-400' : 'text-slate-700')}>{t.title}</div>
+                        {t.assignee?.name && <div className="text-[9px] text-slate-400">→ {t.assignee.name}</div>}
+                      </div>
+                      <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Recommended products — send a card with one click */}
+          {active.channel === 'shopee' && recProds && recProds.length > 0 && (
+            <div className="p-4 space-y-2 text-xs border-b border-slate-100">
+              <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">สินค้าแนะนำ (ขายดี)</span></div>
+              <div className="space-y-1">
+                {recProds.map((p: any) => (
+                  <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
+                    className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {p.image_url ? <img src={p.image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" /> : <div className="w-8 h-8 rounded bg-slate-100 shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] text-slate-800 line-clamp-1">{p.item_name}</div>
+                      <div className="text-[10px]"><span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>{p.in_stock ? '' : ' · หมด'}</div>
+                    </div>
+                    <Send className="w-3 h-3 text-slate-300 shrink-0" />
+                  </button>
+                ))}
+                <div className="text-[9px] text-slate-400">กดเพื่อส่งการ์ดสินค้าให้ลูกค้า · ค้นหาเพิ่มได้ที่ 📎 การ์ดสินค้า</div>
+              </div>
+            </div>
+          )}
+
+          {/* Coupons — blocked until the platform grants the shopee_voucher scope */}
+          {active.channel === 'shopee' && (
+            <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+              <div className="flex items-center gap-1.5"><Ticket className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
+              <div className="text-[11px] text-slate-400 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ต้องให้ทีม platform เปิดให้ก่อน) พอเปิดแล้วจะเลือก/ส่งคูปองในแชทได้ทันที</div>
             </div>
           )}
 
