@@ -51,6 +51,25 @@ const READ_SPACING_MS = 520; // ~115 reads/min — just under the 120/min chat_r
 
 type Admin = ReturnType<typeof createAdminClient>;
 
+/**
+ * Insert many rows in ONE round-trip; if the batch fails (e.g. a rare race dup on
+ * a unique index), fall back to per-row inserts so a single bad row can't drop the
+ * whole page. Returns how many rows landed. This is what lets the sync batch its
+ * writes (one call per page) instead of ~6 calls per conversation — the difference
+ * between a full sweep taking seconds vs. many minutes.
+ */
+async function bulkInsert(sb: Admin, table: string, rows: any[]): Promise<number> {
+  if (!rows.length) return 0;
+  const { error } = await sb.from(table).insert(rows);
+  if (!error) return rows.length;
+  let n = 0;
+  for (const r of rows) {
+    const { error: e } = await sb.from(table).insert(r);
+    if (!e) n++;
+  }
+  return n;
+}
+
 // ---- brand resolution (cache within a run) ----
 
 async function resolveBrandId(sb: Admin, slug: string | null, cache: Map<string, string>): Promise<string | null> {
@@ -121,30 +140,6 @@ function mapContent(m: any): MappedMsg {
     default:
       return { text: c.text ?? null, message_type: type, attachments: c && Object.keys(c).length ? [{ type, raw: c }] : [] };
   }
-}
-
-// ---- latest-message preview (from the conversation-list payload; no extra API call) ----
-
-async function insertLatestFromList(sb: Admin, dbConvId: string, c: any): Promise<number> {
-  const extId = c.latest_message_id ? String(c.latest_message_id) : null;
-  if (!extId) return 0;
-  const { data: seen } = await sb.from('messages').select('id').eq('external_id', extId).maybeSingle();
-  if (seen) return 0;
-
-  const mapped = mapContent({ message_type: c.latest_message_type, content: c.latest_message_content });
-  // Buyer messages carry from_id === conversation.to_id; anything else is the shop/agent.
-  const fromBuyer = String(c.latest_message_from_id) === String(c.to_id);
-  const { error } = await sb.from('messages').insert({
-    conversation_id: dbConvId,
-    external_id: extId,
-    sender_type: fromBuyer ? 'customer' : 'agent',
-    message_type: mapped.message_type,
-    text: mapped.text,
-    attachments: mapped.attachments,
-    metadata: { platform: 'shopee', from_list: true },
-    created_at: c.last_message_timestamp ? new Date(Number(c.last_message_timestamp) / NANO * 1000).toISOString() : new Date().toISOString(),
-  });
-  return error ? 0 : 1;
 }
 
 // ---- per-conversation message sync (full thread, used on-demand) ----
@@ -268,60 +263,107 @@ export async function syncShop(
     const nextCursor = pr?.next_cursor?.next_message_time_nano;
     const more = pr?.more === true;
 
-    for (const c of convs) {
-      const extConvId = String(c.conversation_id);
-      const toId = c.to_id != null ? String(c.to_id) : null;
-      if (!extConvId || !toId) continue;
+    // ---- BATCHED per-page persistence -------------------------------------
+    // Old path did ~6 DB round-trips PER conversation (select+write customer,
+    // select+insert conversation, select+insert message, update conversation) —
+    // a shop with 300 recent chats = ~1,800 sequential calls = several MINUTES,
+    // which is why a full sweep never reached the later shops. Below does a
+    // handful of BULK calls per 20-conversation page instead (~15× fewer calls),
+    // so each shop syncs in seconds and every brand refreshes together.
+    const items = convs
+      .map((c) => ({ c, extConvId: String(c.conversation_id), toId: c.to_id != null ? String(c.to_id) : null }))
+      .filter((r) => r.extConvId && r.toId) as { c: any; extConvId: string; toId: string }[];
 
-      // upsert customer (keyed on channel+channel_user_id)
-      let customerId: string;
-      const { data: cust } = await sb.from('customers').select('id')
-        .eq('channel', 'shopee').eq('channel_user_id', toId).maybeSingle();
-      if (cust?.id) {
-        customerId = cust.id;
-        await sb.from('customers').update({
-          display_name: c.to_name || 'Shopee Buyer', avatar: c.to_avatar || '🛒', brand_id: brandId,
-        }).eq('id', customerId);
-      } else {
-        const { data: newCust, error } = await sb.from('customers').insert({
-          channel: 'shopee', channel_user_id: toId, display_name: c.to_name || 'Shopee Buyer',
-          avatar: c.to_avatar || '🛒', brand_id: brandId,
-        }).select('id').maybeSingle();
-        if (error || !newCust) continue;
-        customerId = newCust.id;
-      }
+    if (items.length) {
+      const tsOf = (c: any) =>
+        c.last_message_timestamp ? new Date(Number(c.last_message_timestamp) / NANO * 1000).toISOString() : new Date().toISOString();
+      const previewTypeOf = (c: any) => String(c.latest_message_type || 'text');
+      const snippetOf = (c: any) => messageSnippet(previewTypeOf(c), c?.latest_message_content?.text ?? null);
 
-      // upsert conversation (keyed on channel+external_id)
-      const lastTs = c.last_message_timestamp ? new Date(Number(c.last_message_timestamp) / NANO * 1000).toISOString() : new Date().toISOString();
-      let dbConvId: string;
-      const { data: existingConv } = await sb.from('conversations').select('id')
-        .eq('channel', 'shopee').eq('external_id', extConvId).maybeSingle();
-      if (existingConv?.id) {
-        dbConvId = existingConv.id;
-      } else {
-        const { data: newConv, error } = await sb.from('conversations').insert({
-          customer_id: customerId, channel: 'shopee', brand_id: brandId,
-          external_id: extConvId, shop_id: shopId, buyer_id: toId,
-          ai_handling: false,            // NO AI — human agents only (Shopee policy)
+      // 1) Customers — one bulk upsert (customers has UNIQUE(channel,channel_user_id)),
+      //    then one select to map buyer id → customer uuid.
+      const custByToId = new Map<string, string>();
+      const custSeen = new Set<string>();
+      const custRows = items
+        .filter((r) => !custSeen.has(r.toId) && custSeen.add(r.toId))
+        .map((r) => ({
+          channel: 'shopee', channel_user_id: r.toId,
+          display_name: r.c.to_name || 'Shopee Buyer', avatar: r.c.to_avatar || '🛒', brand_id: brandId,
+        }));
+      await sb.from('customers').upsert(custRows, { onConflict: 'channel,channel_user_id' });
+      const { data: custs } = await sb.from('customers').select('id,channel_user_id')
+        .eq('channel', 'shopee').in('channel_user_id', [...custSeen]);
+      for (const r of custs || []) custByToId.set(String(r.channel_user_id), r.id);
+
+      // 2) Conversations — find which already exist (so we preserve their
+      //    status/ai_handling/assignee and only bulk-insert the truly new ones).
+      const extIds = items.map((r) => r.extConvId);
+      const convByExt = new Map<string, string>();
+      const preExisting = new Set<string>();
+      const { data: existing } = await sb.from('conversations').select('id,external_id')
+        .eq('channel', 'shopee').in('external_id', extIds);
+      for (const r of existing || []) { convByExt.set(String(r.external_id), r.id); preExisting.add(String(r.external_id)); }
+
+      const newConvRows = items
+        .filter((r) => !preExisting.has(r.extConvId) && custByToId.has(r.toId))
+        .map((r) => ({
+          customer_id: custByToId.get(r.toId)!, channel: 'shopee', brand_id: brandId,
+          external_id: r.extConvId, shop_id: shopId, buyer_id: r.toId,
+          ai_handling: false,          // NO AI — human agents only (Shopee policy)
           status: 'open',
-        }).select('id').maybeSingle();
-        if (error || !newConv) continue;
-        dbConvId = newConv.id;
-        convCount++;
+          last_message_at: tsOf(r.c), unread: Number(r.c.unread_count) || 0,
+          last_snippet: snippetOf(r.c), last_message_type: previewTypeOf(r.c),
+        }));
+      if (newConvRows.length) {
+        convCount += await bulkInsert(sb, 'conversations', newConvRows);
+        // Re-read to pick up the new uuids (also resolves any that lost a race).
+        const { data: after } = await sb.from('conversations').select('id,external_id')
+          .eq('channel', 'shopee').in('external_id', newConvRows.map((r) => r.external_id));
+        for (const r of after || []) convByExt.set(String(r.external_id), r.id);
       }
 
-      // Store only the latest-message preview here (no extra API call). The full
-      // thread is fetched + persisted on demand when the conversation is opened.
-      msgCount += await insertLatestFromList(sb, dbConvId, c);
+      // 3) Latest-message previews — bulk. Only insert previews we don't already
+      //    have; the set of conversations whose latest message is NEW tells us
+      //    which EXISTING conversations actually need a preview refresh (skip the
+      //    unchanged majority — the big steady-state win).
+      const previewIds = items.map((r) => r.c.latest_message_id).filter(Boolean).map(String);
+      const seenMsg = new Set<string>();
+      if (previewIds.length) {
+        const { data: sm } = await sb.from('messages').select('external_id').in('external_id', previewIds);
+        for (const r of sm || []) seenMsg.add(String(r.external_id));
+      }
+      const changed = new Set<string>();
+      const msgRows: any[] = [];
+      for (const { c, extConvId } of items) {
+        const extMsgId = c.latest_message_id ? String(c.latest_message_id) : null;
+        if (!extMsgId || seenMsg.has(extMsgId)) continue;
+        const dbId = convByExt.get(extConvId);
+        if (!dbId) continue;
+        changed.add(extConvId);
+        const mapped = mapContent({ message_type: c.latest_message_type, content: c.latest_message_content });
+        const fromBuyer = String(c.latest_message_from_id) === String(c.to_id);
+        msgRows.push({
+          conversation_id: dbId, external_id: extMsgId,
+          sender_type: fromBuyer ? 'customer' : 'agent',
+          message_type: mapped.message_type, text: mapped.text, attachments: mapped.attachments,
+          metadata: { platform: 'shopee', from_list: true },
+          created_at: tsOf(c),
+        });
+      }
+      msgCount += await bulkInsert(sb, 'messages', msgRows);
 
-      // Source-of-truth conversation fields (override the message trigger's now()/unread bumps).
-      const previewType = String(c.latest_message_type || 'text');
-      await sb.from('conversations').update({
-        last_message_at: lastTs,
-        unread: Number(c.unread_count) || 0,
-        last_snippet: messageSnippet(previewType, c?.latest_message_content?.text ?? null),
-        last_message_type: previewType,
-      }).eq('id', dbConvId);
+      // 4) Refresh preview fields on EXISTING conversations that got a new latest
+      //    message (upsert on the PK updates only these columns; status/ai_handling/
+      //    assignee are left untouched). New conversations already carry fresh
+      //    values from their insert, so they're excluded.
+      const updRows = items
+        .filter((r) => preExisting.has(r.extConvId) && changed.has(r.extConvId) && convByExt.has(r.extConvId) && custByToId.has(r.toId))
+        .map((r) => ({
+          id: convByExt.get(r.extConvId)!, customer_id: custByToId.get(r.toId)!, channel: 'shopee',
+          last_message_at: tsOf(r.c), unread: Number(r.c.unread_count) || 0,
+          last_snippet: snippetOf(r.c), last_message_type: previewTypeOf(r.c),
+        }));
+      if (updRows.length) await sb.from('conversations').upsert(updRows, { onConflict: 'id' });
     }
 
     cursor = nextCursor ? String(nextCursor) : cursor;
