@@ -27,11 +27,19 @@ export async function register() {
       // Sweep EVERY shop recent-first (last 24h → newest). Bounded by the Shopee
       // read cap (~120/min), a full sweep is ~1.5–2 min, so all brands refresh
       // together roughly every 3 min (vs ~20 min with one-shop-per-tick).
-      const { syncAllShops } = await import('@/lib/chat-source/sync');
+      const { syncAllShops, backfillShops } = await import('@/lib/chat-source/sync');
       const res = await syncAllShops({ reseekDays: 1, maxPagesPerShop: 15 });
       const convs = res.reduce((s, x) => s + (x?.conversations || 0), 0);
       const msgs = res.reduce((s, x) => s + (x?.messages || 0), 0);
-      console.log(`[cron] full sweep done — ${res.length} shops, +${convs} conv, +${msgs} msg`);
+      console.log(`[cron] recent sweep — ${res.length} shops, +${convs} conv, +${msgs} msg`);
+
+      // Then spend the rest of the budget backfilling shops that aren't fully
+      // caught up yet (so our conversation list matches Chat++'s full history).
+      // A few shops per tick; each finishes over successive ticks, then is skipped.
+      const bf = await backfillShops({ shops: 3, maxPagesPerShop: 15, sinceDays: 90 });
+      const bfConv = bf.reduce((s, x) => s + (x?.conversations || 0), 0);
+      const done = bf.filter((x) => x?.caught_up).length;
+      if (bf.length) console.log(`[cron] backfill — ${bf.length} shops, +${bfConv} conv, ${done} now caught up`);
     } catch (e) {
       console.error('[cron] sweep failed:', (e as Error)?.message);
     } finally {

@@ -371,12 +371,21 @@ export async function syncShop(
     if (!nextCursor) break;
   }
 
-  const { error: updErr } = await sb.from('chat_shops').update({
-    sync_cursor: cursor ?? null,
-    caught_up: caughtUp,
+  // Persist per mode. RECENT mode (reseek) only refreshes the newest window every
+  // run, so it must NOT touch sync_cursor / caught_up — those belong to the BACKFILL
+  // walk (which advances a persistent cursor from a deep baseline to full coverage).
+  // If recent mode wrote sync_cursor it would keep resetting backlog progress to ~now
+  // and the older conversations would never be filled (the "ไม่ขึ้นหมด / ไม่ตรงกับ
+  // Chat++" gap). Recent mode only bumps last_synced_at + the running count.
+  const patch: Record<string, unknown> = {
     last_synced_at: new Date().toISOString(),
     conversations_synced: (shop?.conversations_synced || 0) + convCount,
-  }).eq('shop_id', shopId);
+  };
+  if (opts.reseekDays == null) {
+    patch.sync_cursor = cursor ?? null;
+    patch.caught_up = caughtUp;
+  }
+  const { error: updErr } = await sb.from('chat_shops').update(patch).eq('shop_id', shopId);
   if (updErr) console.error('[sync] chat_shops update failed for', shopId, updErr.message);
 
   return { shop_id: shopId, brand: brandSlug, conversations: convCount, messages: msgCount, caught_up: caughtUp, pages: pagesWalked };
@@ -506,6 +515,47 @@ export async function syncAllShops(opts: { maxPagesPerShop?: number; sinceDays?:
     } catch (e) {
       results.push({ shop_id: s.shop_id, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 });
     }
+  }
+  return results;
+}
+
+/**
+ * BACKFILL pass — the fix for "ไม่ขึ้นหมด / ไม่ตรงกับ Chat++". The recent-first
+ * sweep only ever grabs the last day, so conversations that were last active
+ * before go-live (but within Chat++'s list) were never captured. This walks each
+ * NOT-yet-caught-up shop's PERSISTENT cursor forward from its deep baseline toward
+ * the present, a bounded number of pages per run, advancing until it reaches "now"
+ * (more:false → caught_up=true). Runs a few shops per tick so it shares the read
+ * budget with the recent sweep and finishes the one-time catch-up over several ticks.
+ *
+ * On a shop's first backfill the cursor is seeded at (now − sinceDays); pass a deep
+ * sinceDays (e.g. 90) for a one-time reseed done separately. Once caught_up, a shop
+ * is skipped here and only the recent sweep keeps it fresh.
+ */
+export async function backfillShops(
+  opts: { shops?: number; maxPagesPerShop?: number; sinceDays?: number } = {},
+): Promise<SyncShopResult[]> {
+  const sb = createAdminClient();
+  const nShops = opts.shops ?? 3;
+  const { data: shops } = await sb
+    .from('chat_shops')
+    .select('shop_id')
+    .eq('platform', 'shopee')
+    .eq('caught_up', false)
+    .order('last_synced_at', { ascending: true, nullsFirst: true })
+    .limit(nShops);
+
+  const results: SyncShopResult[] = [];
+  for (const s of shops || []) {
+    try {
+      // reseekDays omitted → BACKFILL mode: uses + persists the shop's sync_cursor.
+      results.push(await syncShop(s.shop_id, { maxPages: opts.maxPagesPerShop ?? 15, sinceDays: opts.sinceDays ?? 90 }));
+    } catch {
+      results.push({ shop_id: s.shop_id, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 });
+    }
+    // Always advance last_synced_at so a shop that errors (e.g. toptoy's broken
+    // token) can't wedge the rotation by staying the stalest pick forever.
+    await sb.from('chat_shops').update({ last_synced_at: new Date().toISOString() }).eq('shop_id', s.shop_id);
   }
   return results;
 }

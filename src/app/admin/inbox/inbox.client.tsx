@@ -29,6 +29,21 @@ function timeAgo(iso?: string | null): string {
   return `${d.getDate()}/${d.getMonth() + 1}`;
 }
 
+// Shopee order status → short Thai label + a tint for the panel badge.
+const ORDER_STATUS: Record<string, { label: string; cls: string }> = {
+  UNPAID: { label: 'รอชำระ', cls: 'bg-amber-100 text-amber-700' },
+  TO_CONFIRM_RECEIVE: { label: 'กำลังส่ง', cls: 'bg-blue-100 text-blue-700' },
+  READY_TO_SHIP: { label: 'เตรียมส่ง', cls: 'bg-indigo-100 text-indigo-700' },
+  SHIPPED: { label: 'จัดส่งแล้ว', cls: 'bg-blue-100 text-blue-700' },
+  PROCESSED: { label: 'กำลังจัดการ', cls: 'bg-indigo-100 text-indigo-700' },
+  COMPLETED: { label: 'สำเร็จ', cls: 'bg-emerald-100 text-emerald-700' },
+  CANCELLED: { label: 'ยกเลิก', cls: 'bg-rose-100 text-rose-700' },
+  IN_CANCEL: { label: 'กำลังยกเลิก', cls: 'bg-rose-100 text-rose-700' },
+  TO_RETURN: { label: 'คืนสินค้า', cls: 'bg-orange-100 text-orange-700' },
+};
+const orderStatusLabel = (s?: string) => ORDER_STATUS[s || '']?.label || (s || '—');
+const orderStatusStyle = (s?: string) => ORDER_STATUS[s || '']?.cls || 'bg-slate-100 text-slate-600';
+
 function fmtDate(iso?: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -97,6 +112,12 @@ export function InboxClient({ userId }: { userId: string }) {
   const [cardForm, setCardForm] = useState<null | 'item' | 'order'>(null);
   const [cardVal, setCardVal] = useState('');
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // Buyer order history (customer panel) + product search (composer card picker).
+  const [buyerOrders, setBuyerOrders] = useState<{ list: any[]; matched: boolean } | null>(null);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [prodQ, setProdQ] = useState('');
+  const [prods, setProds] = useState<any[] | null>(null);
+  const [prodLoading, setProdLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -167,6 +188,20 @@ export function InboxClient({ userId }: { userId: string }) {
       }
     });
   }, [activeId, loadThread]);
+
+  // Load the buyer's real order history when a conversation opens (Shopee only,
+  // lazy — never blocks the thread). Cleared per open so panels don't cross-bleed.
+  useEffect(() => {
+    if (!activeId) { setBuyerOrders(null); return; }
+    const id = activeId;
+    setBuyerOrders(null); setOrdersLoading(true);
+    setProds(null); setProdQ('');
+    fetch(`/api/conversations/${id}/orders`)
+      .then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setBuyerOrders({ list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched }); })
+      .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
+      .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
+  }, [activeId]);
 
   // Open a conversation with an instant optimistic shell (header + profile from the
   // list row) so the UI responds immediately while the full thread loads.
@@ -270,6 +305,32 @@ export function InboxClient({ userId }: { userId: string }) {
       });
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งการ์ดไม่สำเร็จ'); }
       else { setCardForm(null); setCardVal(''); setAttachOpen(false); refreshActive(); }
+    } finally { setSending(false); }
+  };
+
+  // Product search (catalog) → pick a result → send it as an item card.
+  const searchProds = useCallback(async (q: string) => {
+    if (!activeIdRef.current) return;
+    const id = activeIdRef.current;
+    setProdLoading(true);
+    try {
+      const r = await fetch(`/api/conversations/${id}/products?q=${encodeURIComponent(q)}`);
+      const d = await r.json();
+      if (id === activeIdRef.current) setProds(Array.isArray(d?.products) ? d.products : []);
+    } catch { if (id === activeIdRef.current) setProds([]); }
+    finally { if (id === activeIdRef.current) setProdLoading(false); }
+  }, []);
+
+  const sendItemCard = async (itemId: number) => {
+    if (!active || sending) return;
+    setSending(true);
+    try {
+      const r = await fetch(`/api/conversations/${active.id}/card`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'item', item_id: itemId }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งการ์ดไม่สำเร็จ'); }
+      else { setCardForm(null); setProds(null); setProdQ(''); setCardVal(''); setAttachOpen(false); refreshActive(); }
     } finally { setSending(false); }
   };
 
@@ -584,15 +645,63 @@ export function InboxClient({ userId }: { userId: string }) {
                   <StickyNote className="w-3.5 h-3.5" /> โน้ตภายใน
                 </button>
               </div>
-              {cardForm && (
+              {cardForm === 'order' && (
                 <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-2 text-xs bg-slate-50">
-                  <span className="text-slate-500">{cardForm === 'item' ? 'ส่งการ์ดสินค้า — item_id' : 'ส่งการ์ดออเดอร์ — order_sn'}</span>
+                  <span className="text-slate-500">ส่งการ์ดออเดอร์ — order_sn</span>
                   <input value={cardVal} onChange={e => setCardVal(e.target.value)} autoFocus
                     onKeyDown={e => { if (e.key === 'Enter') sendCardMsg(); }}
-                    placeholder={cardForm === 'item' ? 'เช่น 22001' : 'เช่น 240505FR5QG0CF'}
+                    placeholder="เช่น 240505FR5QG0CF"
                     className="flex-1 max-w-xs border border-slate-200 rounded-md px-2 py-1" />
                   <button onClick={sendCardMsg} disabled={sending} className="px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">ส่ง</button>
                   <button onClick={() => { setCardForm(null); setCardVal(''); }} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              )}
+              {cardForm === 'item' && (
+                <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 space-y-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 whitespace-nowrap">ค้นหาสินค้า</span>
+                    <input value={prodQ} onChange={e => setProdQ(e.target.value)} autoFocus
+                      onKeyDown={e => { if (e.key === 'Enter') searchProds(prodQ); }}
+                      placeholder="พิมพ์ชื่อสินค้า/SKU แล้วกด Enter (เว้นว่าง = ขายดี)"
+                      className="flex-1 border border-slate-200 rounded-md px-2 py-1" />
+                    <button onClick={() => searchProds(prodQ)} disabled={prodLoading} className="px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">ค้นหา</button>
+                    <button onClick={() => { setCardForm(null); setProds(null); setProdQ(''); }} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                  {prodLoading ? (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-2"><Loader2 className="w-3 h-3 animate-spin" /> กำลังค้นหา…</div>
+                  ) : prods && prods.length > 0 ? (
+                    <div className="max-h-56 overflow-y-auto scroll-thin grid grid-cols-1 gap-1">
+                      {prods.map((p: any) => (
+                        <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
+                          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {p.image_url ? <img src={p.image_url} alt="" className="w-10 h-10 rounded object-cover shrink-0" /> : <div className="w-10 h-10 rounded bg-slate-100 shrink-0" />}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] text-slate-800 line-clamp-2 leading-tight">{p.item_name}</div>
+                            <div className="flex items-center gap-1.5 mt-0.5 text-[10px]">
+                              <span className="font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>
+                              {p.original_price > p.price && <span className="text-slate-400 line-through">฿{Number(p.original_price).toLocaleString()}</span>}
+                              <span className={cn('rounded px-1 py-0.5 font-medium', p.in_stock ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>
+                                {p.in_stock ? `สต็อก ${p.stock}` : 'หมด'}
+                              </span>
+                              {p.lifetime_sales ? <span className="text-slate-400">ขาย {Number(p.lifetime_sales).toLocaleString()}</span> : null}
+                            </div>
+                          </div>
+                          <Send className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : prods ? (
+                    <div className="text-[11px] text-slate-400 py-1.5">ไม่พบสินค้า — ลองคำค้นอื่น หรือใส่ item_id เอง:
+                      <span className="inline-flex items-center gap-1 ml-1">
+                        <input value={cardVal} onChange={e => setCardVal(e.target.value)} placeholder="item_id"
+                          className="w-24 border border-slate-200 rounded px-1.5 py-0.5" onKeyDown={e => { if (e.key === 'Enter') sendCardMsg(); }} />
+                        <button onClick={sendCardMsg} disabled={sending} className="px-1.5 py-0.5 rounded bg-indigo-600 text-white disabled:opacity-50">ส่ง</button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400">แคตตาล็อกอัปเดตรายวัน · สต็อกเป็นค่าประมาณ · กดสินค้าเพื่อส่งการ์ดให้ลูกค้า</div>
+                  )}
                 </div>
               )}
               <div className="p-3 flex items-end gap-2 relative">
@@ -607,7 +716,7 @@ export function InboxClient({ userId }: { userId: string }) {
                       <button onClick={() => { setAttachOpen(false); fileRef.current?.click(); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
                         <ImageIcon className="w-4 h-4 text-emerald-600" /> ส่งรูปภาพ
                       </button>
-                      <button onClick={() => { setCardForm('item'); setAttachOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
+                      <button onClick={() => { setCardForm('item'); setAttachOpen(false); setProds(null); setProdQ(''); searchProds(''); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
                         <CreditCard className="w-4 h-4 text-amber-600" /> การ์ดสินค้า
                       </button>
                       <button onClick={() => { setCardForm('order'); setAttachOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
@@ -684,10 +793,50 @@ export function InboxClient({ userId }: { userId: string }) {
             </div>
           )}
 
-          {/* Orders referenced in this chat (from order cards / shipping messages) */}
-          <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ออเดอร์ที่เกี่ยวข้อง</div>
-            {((active as any).order_refs?.length ?? 0) > 0 ? (
+          {/* Buyer's real order history for this shop (Shopee buyer-orders API) */}
+          <div className="p-4 space-y-2 text-xs border-b border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ประวัติการสั่งซื้อ</span>
+              {buyerOrders && buyerOrders.list.length > 0 && (
+                <span className="text-[10px] font-semibold text-slate-500">{buyerOrders.list.length} ออเดอร์</span>
+              )}
+            </div>
+            {ordersLoading ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
+            ) : buyerOrders && buyerOrders.list.length > 0 ? (
+              <div className="space-y-1.5">
+                {buyerOrders.list.map((o: any) => (
+                  <div key={o.order_sn} className="rounded-lg border border-slate-200 px-2.5 py-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] text-slate-500 truncate">{o.order_sn}</span>
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
+                    </div>
+                    {(o.items || []).map((it: any, i: number) => (
+                      <div key={i} className="text-slate-700 leading-tight">
+                        <span className="line-clamp-2">{it.item_name}</span>
+                        <span className="text-slate-400">{it.model_name ? ` · ${it.model_name}` : ''} × {it.quantity}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                      <span>{o.order_date}{o.cod ? ' · เก็บเงินปลายทาง' : ''}</span>
+                      <a href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">เปิด ↗</a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] text-slate-400">
+                {buyerOrders && !buyerOrders.matched
+                  ? 'ไม่พบประวัติการสั่งซื้อสำหรับชื่อผู้ใช้นี้ (ชื่อร้านค้าอาจต่างจากตอนสั่ง)'
+                  : 'ยังไม่พบประวัติการสั่งซื้อ'}
+              </div>
+            )}
+          </div>
+
+          {/* Orders explicitly referenced in the chat thread (order cards / shipping) */}
+          {((active as any).order_refs?.length ?? 0) > 0 && (
+            <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+              <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">อ้างถึงในแชทนี้</div>
               <div className="space-y-1">
                 {((active as any).order_refs as string[]).map((sn) => (
                   <a key={sn} href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer"
@@ -696,12 +845,9 @@ export function InboxClient({ userId }: { userId: string }) {
                     <span className="text-[10px] text-brand-600 opacity-0 group-hover:opacity-100 shrink-0">เปิด ↗</span>
                   </a>
                 ))}
-                <div className="text-[10px] text-slate-400 pt-0.5">กดเพื่อเปิดใน Seller Center · รายละเอียดสินค้าในออเดอร์ต้องเชื่อม Order API</div>
               </div>
-            ) : (
-              <div className="text-[11px] text-slate-400">ยังไม่พบเลขออเดอร์ในแชทนี้</div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Commerce — real numbers if enriched, else a hint */}
           <div className="p-4 space-y-1.5 text-xs">

@@ -249,3 +249,123 @@ export async function markRead(shopId: string, conversationId: string): Promise<
     { method: 'POST' },
   );
 }
+
+// ---- Context reads (Shopee) — order history + product catalog ----
+
+export interface BuyerOrderItem { item_name: string; model_name?: string; quantity: number; }
+export interface BuyerOrder {
+  order_sn: string;
+  order_date: string;
+  order_status: string;
+  cod: boolean;
+  currency: string;
+  total_qty: number;
+  items: BuyerOrderItem[];
+}
+
+/**
+ * Shopee-only: the buyer's past orders for THIS shop, for agent context in the
+ * conversation. Matched by `buyer_username` = the conversation's `to_name`
+ * (our order data has no buyer user_id). Reads ingested order data (BigQuery),
+ * not a live Shopee call. A 0-order result means "no match on this username"
+ * (renamed/different display name), NOT necessarily "never ordered".
+ */
+export async function getBuyerOrders(
+  shopId: string,
+  buyerUsername: string,
+  opts: { limit?: number } = {},
+): Promise<BuyerOrder[]> {
+  const data = await call<{ orders?: BuyerOrder[] }>(
+    `/api/chat/buyer-orders?${qs({ shop_id: shopId, buyer_username: buyerUsername, limit: opts.limit ?? 20 })}`,
+  );
+  return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+export interface CatalogProduct {
+  item_id: number;
+  model_id?: number;
+  item_name: string;
+  model_name?: string;
+  item_sku?: string;
+  model_sku?: string;
+  item_status?: string;
+  price: number;
+  original_price?: number;
+  stock: number;
+  in_stock: boolean;
+  image_url?: string;
+  lifetime_sales?: number;
+}
+
+/**
+ * Shopee-only: search the shop's catalog to build product cards. Rows are
+ * variant (model) grain — group by `item_id` for item-level cards. Data is a
+ * daily catalog snapshot (stock is day-fresh, indicative). Empty `q` lists
+ * best-sellers. `sort`: 'sales' (default) | 'price_asc' | 'price_desc'.
+ */
+export async function searchProducts(
+  shopId: string,
+  opts: { q?: string; inStock?: boolean; sort?: 'sales' | 'price_asc' | 'price_desc'; limit?: number } = {},
+): Promise<CatalogProduct[]> {
+  const data = await call<{ products?: CatalogProduct[] }>(
+    `/api/chat/product-search?${qs({
+      shop_id: shopId,
+      q: opts.q ?? '',
+      in_stock: opts.inStock === undefined ? undefined : opts.inStock,
+      sort: opts.sort ?? 'sales',
+      limit: opts.limit ?? 30,
+    })}`,
+  );
+  return Array.isArray(data?.products) ? data.products : [];
+}
+
+// ---- Vouchers (Shopee) — needs the separate `shopee_voucher` scope ----
+// NOTE: our current key does NOT have this scope yet (list/create → 403
+// "API key missing 'shopee_voucher' scope"). Sending an existing voucher into
+// a chat uses the `chat` scope (sendVoucher below) and works once you have a
+// voucher_id + code. Enumerating/creating vouchers stays 403 until the platform
+// grants `shopee_voucher` on the key.
+
+export interface Voucher {
+  voucher_id: number;
+  voucher_code: string;
+  voucher_name: string;
+  voucher_type: number;   // 1 shop / 2 product
+  reward_type: number;    // 1 fixed / 2 percentage / 3 coin
+  discount_amount?: number;
+  percentage?: number;
+  max_price?: number;
+  min_basket_price?: number;
+  usage_quantity?: number;
+  current_usage?: number;
+  start_time?: number;
+  end_time?: number;
+}
+
+/** Shopee-only: list vouchers. Requires `shopee_voucher` scope (403 without it). */
+export async function listVouchers(
+  shopId: string,
+  status: 'upcoming' | 'ongoing' | 'expired' | 'all' = 'ongoing',
+): Promise<Voucher[]> {
+  const data = await call<{ voucher_list?: Voucher[]; vouchers?: Voucher[] }>(
+    `/api/v1/shopee/vouchers?${qs({ shop_id: shopId, status, page_size: 50 })}`,
+  );
+  return (data?.voucher_list || data?.vouchers || []) as Voucher[];
+}
+
+/** Send an existing voucher card into a chat (human-triggered). Uses `chat` scope. */
+export async function sendVoucher(
+  args: { shopId: string; conversationId: string; toId?: string; voucherId: number; voucherCode: string },
+): Promise<any> {
+  const body: Record<string, unknown> = {
+    platform: 'shopee',
+    shop_id: args.shopId,
+    type: 'voucher',
+    content: { voucher_id: args.voucherId, voucher_code: args.voucherCode },
+  };
+  if (args.toId) body.to_id = args.toId;
+  return call(
+    `/api/chat/conversations/${encodeURIComponent(args.conversationId)}/messages`,
+    { method: 'POST', body },
+  );
+}
