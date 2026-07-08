@@ -7,7 +7,7 @@ import { ChannelIcon } from '@/components/ui/channel-icon';
 import { Avatar } from '@/components/ui/avatar';
 import { Fi } from '@/components/ui/fi';
 import { AnimatedChat, AnimatedInbox, AnimatedAI, AnimatedRobot } from '@/components/ui/animated-icons';
-import { Search, Send, Bot, Check, Paperclip, Image as ImageIcon, CreditCard, RefreshCw, X, Loader2, StickyNote, Pin, ListChecks, UserPlus, Ticket, Plus, Trash2, ChevronDown } from 'lucide-react';
+import { Bot, Loader2 } from 'lucide-react';
 import type { Conversation, Message, MessageAttachment, Macro } from '@/types/database';
 
 const BRANDS = [
@@ -75,7 +75,7 @@ function AttachmentView({ att, onSeller, onOpenImage }: { att: MessageAttachment
       return a.url
         // eslint-disable-next-line @next/next/no-img-element
         ? <button type="button" onClick={() => onOpenImage?.(a.url)} className="block cursor-zoom-in"><img src={a.url} alt="" className="rounded-lg max-w-[220px] max-h-64 object-cover" /></button>
-        : <span className="inline-flex items-center gap-1 text-xs opacity-80"><ImageIcon className="w-3.5 h-3.5" /> ส่งรูปแล้ว</span>;
+        : <span className="inline-flex items-center gap-1 text-xs opacity-80"><Fi name="picture" className="text-sm" /> ส่งรูปแล้ว</span>;
     case 'video':
       return a.url
         ? <video src={a.url} controls className="rounded-lg max-w-[240px] max-h-64" />
@@ -84,9 +84,9 @@ function AttachmentView({ att, onSeller, onOpenImage }: { att: MessageAttachment
       // eslint-disable-next-line @next/next/no-img-element
       return a.url ? <button type="button" onClick={() => onOpenImage?.(a.url)} className="block cursor-zoom-in"><img src={a.url} alt="sticker" className="w-24 h-24 object-contain" /></button> : <span>[sticker]</span>;
     case 'item':
-      return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><CreditCard className="w-3.5 h-3.5" /> สินค้า #{String(a.item_id ?? '')}</div>;
+      return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><Fi name="box-open" className="text-sm" /> สินค้า #{String(a.item_id ?? '')}</div>;
     case 'order':
-      return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><CreditCard className="w-3.5 h-3.5" /> ออเดอร์ {String(a.order_sn ?? '')}</div>;
+      return <div className={`flex items-center gap-2 rounded-lg border ${frame} px-2.5 py-1.5 text-xs`}><Fi name="credit-card" className="text-sm" /> ออเดอร์ {String(a.order_sn ?? '')}</div>;
     default:
       return <span className="text-xs opacity-70">[{a.type}]</span>;
   }
@@ -522,7 +522,7 @@ export function InboxClient({ userId }: { userId: string }) {
         {/* Row 1: search + status */}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative w-56">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+            <Fi name="search" className="text-base absolute left-3 top-2.5 text-slate-400" />
             <input value={search} onChange={e => setSearch(e.target.value)}
               className="w-full bg-slate-100 rounded-lg pl-9 pr-3 py-2 text-sm border-0 focus:ring-2 focus:ring-brand-400" placeholder="ค้นหาชื่อ / ข้อความ / แบรนด์..." />
           </div>
@@ -548,7 +548,7 @@ export function InboxClient({ userId }: { userId: string }) {
             </button>
             <button onClick={() => runSync()} disabled={syncing}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1.5">
-              {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Fi name="refresh" className="text-sm" />}
               ซิงค์ Shopee
             </button>
           </div>
@@ -619,7 +619,7 @@ export function InboxClient({ userId }: { userId: string }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center gap-2">
                       <span className={cn('text-sm truncate flex items-center gap-1', unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800')}>
-                        {(c as any).pinned && <Pin className="w-3 h-3 fill-amber-500 text-amber-500 shrink-0" />}
+                        {(c as any).pinned && <Fi name="thumbtack" className="text-[11px] text-amber-500 shrink-0" />}
                         <span className="truncate">{c.customer_name || '-'}</span>
                       </span>
                       <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(c.last_message_at)}</span>
@@ -633,7 +633,7 @@ export function InboxClient({ userId }: { userId: string }) {
                       {c.priority === 'high' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วน</span>}
                       {c.priority === 'urgent' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วนมาก</span>}
                       {c.ai_handling && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-violet-100 text-violet-700 font-semibold"><Bot className="w-2.5 h-2.5" /> AI</span>}
-                      {c.assignee_name && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-slate-100 text-slate-600 font-medium truncate max-w-[80px]"><UserPlus className="w-2.5 h-2.5 shrink-0" />{c.assignee_name}</span>}
+                      {c.assignee_name && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-slate-100 text-slate-600 font-medium truncate max-w-[80px]"><Fi name="user" className="text-[10px] shrink-0" />{c.assignee_name}</span>}
                     </div>
                   </div>
                 </div>
@@ -677,15 +677,15 @@ export function InboxClient({ userId }: { userId: string }) {
                 <button onClick={togglePin} title={(active as any).pinned ? 'เลิกปักหมุด' : 'ปักหมุดแชทนี้'}
                   className={cn('px-2.5 py-1.5 text-xs rounded-lg border flex items-center gap-1.5',
                     (active as any).pinned ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 hover:bg-slate-50')}>
-                  <Pin className={cn('w-3.5 h-3.5', (active as any).pinned && 'fill-amber-500')} />{(active as any).pinned ? 'ปักหมุดแล้ว' : 'ปักหมุด'}
+                  <Fi name="thumbtack" className="text-[13px]" />{(active as any).pinned ? 'ปักหมุดแล้ว' : 'ปักหมุด'}
                 </button>
                 {/* Assign */}
                 <div className="relative">
                   <button onClick={() => setAssignOpen(o => !o)}
                     className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
-                    <UserPlus className="w-3.5 h-3.5" />
+                    <Fi name="user-add" className="text-[13px]" />
                     {(active as any).assignee?.name || userName(active.assigned_to) || 'มอบหมาย'}
-                    <ChevronDown className="w-3 h-3 opacity-60" />
+                    <Fi name="angle-small-down" className="text-[12px] opacity-60" />
                   </button>
                   {assignOpen && (
                     <div className="absolute right-0 top-10 z-20 w-52 max-h-72 overflow-y-auto scroll-thin bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-sm">
@@ -695,14 +695,14 @@ export function InboxClient({ userId }: { userId: string }) {
                       {team.map(u => (
                         <button key={u.id} onClick={() => assignTo(u.id)}
                           className={cn('w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between', active.assigned_to === u.id && 'bg-slate-50 font-medium')}>
-                          {u.name}{active.assigned_to === u.id && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                          {u.name}{active.assigned_to === u.id && <Fi name="check" className="text-[13px] text-emerald-600" />}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
                 <button onClick={close} className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5" />ปิดเคส
+                  <Fi name="check" className="text-[13px]" />ปิดเคส
                 </button>
               </div>
             </div>
@@ -781,7 +781,7 @@ export function InboxClient({ userId }: { userId: string }) {
                 ))}
                 <button onClick={() => setNoteMode(n => !n)}
                   className={cn('ml-auto px-2 py-1 rounded-md flex items-center gap-1 font-medium', noteMode ? 'bg-amber-200 text-amber-800' : 'bg-amber-50 text-amber-700 hover:bg-amber-100')}>
-                  <StickyNote className="w-3.5 h-3.5" /> โน้ตภายใน
+                  <Fi name="note-sticky" className="text-sm" /> โน้ตภายใน
                 </button>
               </div>
               {cardForm === 'order' && (
@@ -792,7 +792,7 @@ export function InboxClient({ userId }: { userId: string }) {
                     placeholder="เช่น 240505FR5QG0CF"
                     className="flex-1 max-w-xs border border-slate-200 rounded-md px-2 py-1" />
                   <button onClick={sendCardMsg} disabled={sending} className="px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">ส่ง</button>
-                  <button onClick={() => { setCardForm(null); setCardVal(''); }} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => { setCardForm(null); setCardVal(''); }} className="text-slate-400 hover:text-slate-600"><Fi name="cross-small" className="text-sm" /></button>
                 </div>
               )}
               {cardForm === 'item' && (
@@ -804,7 +804,7 @@ export function InboxClient({ userId }: { userId: string }) {
                       placeholder="พิมพ์ชื่อสินค้า/SKU แล้วกด Enter (เว้นว่าง = ขายดี)"
                       className="flex-1 border border-slate-200 rounded-md px-2 py-1" />
                     <button onClick={() => searchProds(prodQ)} disabled={prodLoading} className="px-2 py-1 rounded-md bg-indigo-600 text-white disabled:opacity-50">ค้นหา</button>
-                    <button onClick={() => { setCardForm(null); setProds(null); setProdQ(''); }} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => { setCardForm(null); setProds(null); setProdQ(''); }} className="text-slate-400 hover:text-slate-600"><Fi name="cross-small" className="text-sm" /></button>
                   </div>
                   {prodLoading ? (
                     <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-2"><Loader2 className="w-3 h-3 animate-spin" /> กำลังค้นหา…</div>
@@ -826,7 +826,7 @@ export function InboxClient({ userId }: { userId: string }) {
                               {p.lifetime_sales ? <span className="text-slate-400">ขาย {Number(p.lifetime_sales).toLocaleString()}</span> : null}
                             </div>
                           </div>
-                          <Send className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                          <Fi name="paper-plane" className="text-sm text-slate-300 shrink-0" />
                         </button>
                       ))}
                     </div>
@@ -848,18 +848,18 @@ export function InboxClient({ userId }: { userId: string }) {
                   onChange={e => { const f = e.target.files?.[0]; if (f) sendImageFile(f); }} />
                 <div className="relative">
                   <button onClick={() => setAttachOpen(o => !o)} className={cn('p-2 hover:text-slate-600', attachOpen ? 'text-indigo-600' : 'text-slate-400')}>
-                    <Paperclip className="w-4 h-4" />
+                    <Fi name="clip" className="text-base" />
                   </button>
                   {attachOpen && (
                     <div className="absolute bottom-11 left-0 z-10 w-44 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-sm">
                       <button onClick={() => { setAttachOpen(false); fileRef.current?.click(); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
-                        <ImageIcon className="w-4 h-4 text-emerald-600" /> ส่งรูปภาพ
+                        <Fi name="picture" className="text-base text-emerald-600" /> ส่งรูปภาพ
                       </button>
                       <button onClick={() => { setCardForm('item'); setAttachOpen(false); setProds(null); setProdQ(''); searchProds(''); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
-                        <CreditCard className="w-4 h-4 text-amber-600" /> การ์ดสินค้า
+                        <Fi name="box-open" className="text-base text-amber-600" /> การ์ดสินค้า
                       </button>
                       <button onClick={() => { setCardForm('order'); setAttachOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50">
-                        <CreditCard className="w-4 h-4 text-blue-600" /> การ์ดออเดอร์
+                        <Fi name="credit-card" className="text-base text-blue-600" /> การ์ดออเดอร์
                       </button>
                       <div className="px-3 py-1.5 text-[10px] text-slate-400 border-t border-slate-100 mt-1">Shopee ส่งวิดีโอไม่ได้</div>
                     </div>
@@ -877,7 +877,7 @@ export function InboxClient({ userId }: { userId: string }) {
                 <button onClick={send} disabled={sending}
                   className={cn('text-white px-4 py-2 rounded-lg flex items-center gap-1.5 text-sm font-semibold disabled:opacity-50',
                     noteMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700')}>
-                  {noteMode ? <StickyNote className="w-4 h-4" /> : <Send className="w-4 h-4" />}{sending ? '...' : (noteMode ? 'บันทึก' : 'ส่ง')}
+                  {noteMode ? <Fi name="note-sticky" className="text-base" /> : <Fi name="paper-plane" className="text-base" />}{sending ? '...' : (noteMode ? 'บันทึก' : 'ส่ง')}
                 </button>
               </div>
             </div>
@@ -992,14 +992,14 @@ export function InboxClient({ userId }: { userId: string }) {
                             {it.image_url
                               // eslint-disable-next-line @next/next/no-img-element
                               ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button>
-                              : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><CreditCard className="w-4 h-4 text-slate-300" /></div>}
+                              : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><Fi name="box-open" className="text-base text-slate-300" /></div>}
                             <div className="min-w-0 flex-1 leading-tight">
                               <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
                               <div className="text-slate-400">{it.model_name ? `${it.model_name} · ` : ''}× {it.quantity}</div>
                               {it.item_id && (
                                 <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
                                   className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
-                                  <Send className="w-2.5 h-2.5" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
+                                  <Fi name="paper-plane" className="text-[11px]" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
                                 </button>
                               )}
                             </div>
@@ -1081,24 +1081,24 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'tasks' && (
               <div className="p-4 space-y-2 text-xs">
-                <div className="flex items-center gap-1.5"><ListChecks className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ใบสั่งงาน</span></div>
+                <div className="flex items-center gap-1.5"><Fi name="list-check" className="text-sm text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">ใบสั่งงาน</span></div>
                 <div className="flex items-center gap-1">
                   <input value={newTask} onChange={e => setNewTask(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
                     placeholder="เพิ่มงานที่ต้องทำต่อ…" className="flex-1 border border-slate-200 rounded-md px-2 py-1.5 text-[11px]" />
-                  <button onClick={addTask} className="p-1.5 rounded-md bg-indigo-600 text-white"><Plus className="w-3.5 h-3.5" /></button>
+                  <button onClick={addTask} className="p-1.5 rounded-md bg-indigo-600 text-white"><Fi name="plus" className="text-sm" /></button>
                 </div>
                 {tasks.length > 0 ? (
                   <div className="space-y-1.5 pt-1">
                     {tasks.map((t: any) => (
                       <div key={t.id} className="flex items-start gap-1.5 group">
                         <button onClick={() => toggleTask(t.id, !t.done)} className={cn('mt-0.5 w-4 h-4 rounded border shrink-0 flex items-center justify-center', t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300')}>
-                          {t.done && <Check className="w-3 h-3" />}
+                          {t.done && <Fi name="check" className="text-[11px]" />}
                         </button>
                         <div className="min-w-0 flex-1">
                           <div className={cn('leading-snug', t.done ? 'line-through text-slate-400' : 'text-slate-700')}>{t.title}</div>
                           {t.assignee?.name && <div className="text-[9px] text-slate-400">→ {t.assignee.name}</div>}
                         </div>
-                        <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 shrink-0"><Fi name="trash" className="text-sm" /></button>
                       </div>
                     ))}
                   </div>
@@ -1110,7 +1110,7 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'coupon' && (
               <div className="p-4 space-y-2 text-xs">
-                <div className="flex items-center gap-1.5"><Ticket className="w-3.5 h-3.5 text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
+                <div className="flex items-center gap-1.5"><Fi name="ticket" className="text-sm text-slate-400" /><span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">คูปอง</span></div>
                 <div className="text-[11px] text-slate-400 leading-relaxed">ยังส่งคูปองไม่ได้ — API key ยังไม่มีสิทธิ์ <span className="font-mono">shopee_voucher</span> (ต้องให้ทีม platform เปิดให้ก่อน) พอเปิดแล้วจะเลือก/ส่งคูปองในแชทได้ทันที</div>
               </div>
             )}
@@ -1124,7 +1124,7 @@ export function InboxClient({ userId }: { userId: string }) {
       {lightbox && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white" title="ปิด (Esc)">
-            <X className="w-7 h-7" />
+            <Fi name="cross" className="text-2xl" />
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={lightbox} alt="" className="max-w-full max-h-full rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
