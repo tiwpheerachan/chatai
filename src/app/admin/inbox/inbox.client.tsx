@@ -89,7 +89,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const [macros, setMacros] = useState<Macro[]>([]);
   const [sending, setSending] = useState(false);
   const [noteMode, setNoteMode] = useState(false);
-  const [autoSync, setAutoSync] = useState(true);
+  const [autoSync, setAutoSync] = useState(false); // server cron handles continuous sync now; toggle on for extra browser-driven pulls
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
