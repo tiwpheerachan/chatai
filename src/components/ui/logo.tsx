@@ -29,7 +29,7 @@ export function Wordmark({ subtitle = 'AI Customer Support', size = 38 }: { subt
       <Logo size={size} />
       <div className="leading-tight">
         <div className="flex items-center gap-1">
-          <span className="font-display font-bold tracking-tight text-[18px] bg-gradient-to-r from-indigo-600 via-violet-600 to-pink-600 bg-clip-text text-transparent">
+          <span className="font-display font-bold tracking-tight text-[22px] bg-gradient-to-r from-indigo-600 via-violet-600 to-pink-600 bg-clip-text text-transparent">
             Nexus
           </span>
           <span className="flex items-end gap-[2px] pb-1">

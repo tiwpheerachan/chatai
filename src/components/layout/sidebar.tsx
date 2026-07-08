@@ -71,7 +71,7 @@ export function Sidebar({
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col h-screen sticky top-0">
       <div className="px-4 py-4">
-        <Wordmark size={36} />
+        <Wordmark size={56} />
       </div>
 
       <nav className="flex-1 px-3 overflow-y-auto scroll-thin pb-3">
