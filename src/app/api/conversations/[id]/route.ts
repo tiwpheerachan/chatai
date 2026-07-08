@@ -12,7 +12,9 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   if (!ctx) return res;
   if (!safeUuid(params.id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
   const { sb } = ctx;
-  const live = new URL(req.url).searchParams.get('live') === '1';
+  const sp = new URL(req.url).searchParams;
+  const live = sp.get('live') === '1';
+  const noHydrate = sp.get('nohydrate') === '1'; // DB-only refresh (never call upstream)
 
   const { data: c } = await sb
     .from('conversations')
@@ -21,11 +23,22 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     .maybeSingle();
   if (!c) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  // Pull fresh history from the platform ONLY on explicit `?live=1` (background call).
-  // The default open path stays DB-only so switching conversations is instant — the
-  // client fires a background `?live=1` right after to fill/refresh the thread.
-  if (live && (c as any).channel === 'shopee') {
-    try { await hydrateConversation(params.id); } catch { /* leave what we have */ }
+  // Hydrate the full thread from the platform the FIRST time a conversation is opened
+  // (bulk sync only stored the 1-message preview), then persist it so every later open
+  // reads straight from the DB — no re-fetching from Shopee on each open. `?live=1`
+  // forces a refresh on demand.
+  if ((c as any).channel === 'shopee' && !noHydrate) {
+    let need = live;
+    if (!need) {
+      const { count } = await sb
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('conversation_id', params.id);
+      need = (count ?? 0) <= 1; // only the preview stored → fill it once
+    }
+    if (need) {
+      try { await hydrateConversation(params.id); } catch { /* leave what we have */ }
+    }
   }
 
   const { data: messages } = await sb

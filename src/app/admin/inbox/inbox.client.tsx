@@ -122,8 +122,9 @@ export function InboxClient({ userId }: { userId: string }) {
 
   // Single guarded thread loader: applies its result ONLY if that conversation is
   // still the active one. Prevents the "old chat stays / hangs on switch" bug.
-  const loadThread = useCallback((id: string, opts: { live?: boolean } = {}) => {
-    return fetch(`/api/conversations/${id}${opts.live ? '?live=1' : ''}`)
+  const loadThread = useCallback((id: string, opts: { live?: boolean; noHydrate?: boolean } = {}) => {
+    const q = opts.live ? '?live=1' : opts.noHydrate ? '?nohydrate=1' : '';
+    return fetch(`/api/conversations/${id}${q}`)
       .then(r => r.json())
       .then(d => { if (d?.id === activeIdRef.current) setActive(d); return d; })
       .catch(() => {});
@@ -132,10 +133,9 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) return;
     setThreadLoading(true);
-    // Fast: DB-only read renders instantly.
+    // Single load. The server hydrates from the platform only the first time (when
+    // just the preview is stored), then persists — so re-opening is instant from DB.
     loadThread(activeId).finally(() => { if (activeId === activeIdRef.current) setThreadLoading(false); });
-    // Background: pull fresh from the platform without blocking the switch.
-    loadThread(activeId, { live: true });
   }, [activeId, loadThread]);
 
   // Open a conversation with an instant optimistic shell (header + profile from the
@@ -280,7 +280,9 @@ export function InboxClient({ userId }: { userId: string }) {
   // Keep the open thread live — re-pull it from the platform to catch new replies.
   useEffect(() => {
     if (!activeId) return;
-    const id = setInterval(() => { loadThread(activeId, { live: true }); }, 15000);
+    // Keep the open thread fresh from the DB (cheap — no upstream re-fetch). New
+    // messages arrive in the DB via the server sync/webhook + Supabase Realtime.
+    const id = setInterval(() => { loadThread(activeId, { noHydrate: true }); }, 20000);
     return () => clearInterval(id);
   }, [activeId, loadThread]);
 
