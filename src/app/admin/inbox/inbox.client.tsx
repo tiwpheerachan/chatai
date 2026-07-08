@@ -664,16 +664,35 @@ export function InboxClient({ userId }: { userId: string }) {
             </div>
           )}
 
+          {/* Orders referenced in this chat (from order cards / shipping messages) */}
+          <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">
+            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ออเดอร์ที่เกี่ยวข้อง</div>
+            {((active as any).order_refs?.length ?? 0) > 0 ? (
+              <div className="space-y-1">
+                {((active as any).order_refs as string[]).map((sn) => (
+                  <a key={sn} href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50 group">
+                    <span className="font-mono text-slate-700 truncate">{sn}</span>
+                    <span className="text-[10px] text-brand-600 opacity-0 group-hover:opacity-100 shrink-0">เปิด ↗</span>
+                  </a>
+                ))}
+                <div className="text-[10px] text-slate-400 pt-0.5">กดเพื่อเปิดใน Seller Center · รายละเอียดสินค้าในออเดอร์ต้องเชื่อม Order API</div>
+              </div>
+            ) : (
+              <div className="text-[11px] text-slate-400">ยังไม่พบเลขออเดอร์ในแชทนี้</div>
+            )}
+          </div>
+
           {/* Commerce — real numbers if enriched, else a hint */}
           <div className="p-4 space-y-1.5 text-xs">
-            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">การซื้อ</div>
+            <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">ยอดซื้อ</div>
             {(active.customer?.order_count || active.customer?.ltv) ? (
               <>
                 <div className="flex justify-between gap-2"><span className="text-slate-500">ยอดซื้อสะสม (LTV)</span><span className="font-semibold text-slate-800">฿{(active.customer?.ltv || 0).toLocaleString()}</span></div>
                 <div className="flex justify-between gap-2"><span className="text-slate-500">จำนวนออเดอร์</span><span className="font-semibold text-slate-800">{active.customer?.order_count || 0}</span></div>
               </>
             ) : (
-              <div className="text-[11px] text-slate-400 leading-relaxed">ยังไม่มีข้อมูลยอดซื้อ — เชื่อม Order API เพื่อดึงยอดซื้อ/จำนวนออเดอร์ของลูกค้ารายนี้</div>
+              <div className="text-[11px] text-slate-400 leading-relaxed">ยังไม่มียอดซื้อสะสม — ต้องเชื่อม Order API (ecom ยังไม่เปิดให้ดึง)</div>
             )}
           </div>
         </div>

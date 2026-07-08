@@ -36,6 +36,19 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     .eq('conversation_id', params.id)
     .order('created_at', { ascending: true });
 
+  // Order numbers referenced anywhere in this thread (order cards + shipping
+  // messages carry source_content.order_sn). Lets the agent see which order the
+  // conversation is about even though the API can't return the order's line items.
+  const orderRefs = Array.from(new Set(
+    (messages || []).flatMap((m: any) => {
+      const out: string[] = [];
+      const sn = m?.metadata?.source_content?.order_sn;
+      if (sn) out.push(String(sn));
+      for (const a of (m.attachments || [])) if (a?.type === 'order' && a?.order_sn) out.push(String(a.order_sn));
+      return out;
+    }),
+  ));
+
   // mark as read locally, and on the platform too (Shopee) only when there was unread.
   const hadUnread = ((c as any).unread ?? 0) > 0;
   await sb.from('conversations').update({ unread: 0 }).eq('id', params.id);
@@ -43,7 +56,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     try { await markRead((c as any).shop_id, (c as any).external_id); } catch { /* non-fatal */ }
   }
 
-  return NextResponse.json({ ...c, messages: messages || [] });
+  return NextResponse.json({ ...c, messages: messages || [], order_refs: orderRefs });
 }
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
