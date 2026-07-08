@@ -102,14 +102,18 @@ export function InboxClient({ userId }: { userId: string }) {
 
   const [loadError, setLoadError] = useState(false);
   const failRef = useRef(0);
+  const convoSig = (arr: any[]) => arr.map(c => `${c.id}:${c.last_message_at}:${c.unread}:${c.last_snippet || ''}`).join('|');
   const loadConvos = useCallback(async () => {
     try {
       const r = await fetch('/api/conversations');
       const d = await r.json();
       // Only replace the list with a real array. A transient error response
-      // ({error:...}) must NOT wipe the inbox (that caused "list appears then vanishes").
-      if (Array.isArray(d)) { setConvos(d); failRef.current = 0; setLoadError(false); }
-      else { failRef.current += 1; if (failRef.current >= 3) setLoadError(true); }
+      // ({error:...}) must NOT wipe the inbox. And only re-render when it actually
+      // changed (same data → keep the old array → no flicker/reorder churn).
+      if (Array.isArray(d)) {
+        setConvos(prev => (convoSig(prev) === convoSig(d) ? prev : d));
+        failRef.current = 0; setLoadError(false);
+      } else { failRef.current += 1; if (failRef.current >= 3) setLoadError(true); }
     } catch { failRef.current += 1; if (failRef.current >= 3) setLoadError(true); }
   }, []);
 
@@ -128,7 +132,22 @@ export function InboxClient({ userId }: { userId: string }) {
     const q = opts.live ? '?live=1' : opts.noHydrate ? '?nohydrate=1' : '';
     return fetch(`/api/conversations/${id}${q}`)
       .then(r => r.json())
-      .then(d => { if (d?.id === activeIdRef.current) setActive(d); return d; })
+      .then(d => {
+        if (d?.id !== activeIdRef.current) return d;
+        setActive(prev => {
+          // Skip the state update when nothing changed → no re-render, no scroll jump,
+          // no "message flashes then disappears" flicker on every poll.
+          if (prev && prev.id === d.id) {
+            const pm = prev.messages || [], nm = d.messages || [];
+            const same = pm.length === nm.length
+              && pm[pm.length - 1]?.id === nm[nm.length - 1]?.id
+              && prev.unread === d.unread;
+            if (same) return prev;
+          }
+          return d;
+        });
+        return d;
+      })
       .catch(() => {});
   }, []);
 
@@ -291,9 +310,10 @@ export function InboxClient({ userId }: { userId: string }) {
   // Keep the open thread live — re-pull it from the platform to catch new replies.
   useEffect(() => {
     if (!activeId) return;
-    // Keep the open thread fresh from the DB (cheap — no upstream re-fetch). New
-    // messages arrive in the DB via the server sync/webhook + Supabase Realtime.
-    const id = setInterval(() => { loadThread(activeId, { noHydrate: true }); }, 20000);
+    // Keep the OPEN thread near-live: pull it from Shopee every 15s (just this one
+    // conversation — cheap). Change-detection means no flicker when nothing is new.
+    // This is what makes the active chat feel realtime (like Chat++) without a webhook.
+    const id = setInterval(() => { loadThread(activeId, { live: true }); }, 15000);
     return () => clearInterval(id);
   }, [activeId, loadThread]);
 
