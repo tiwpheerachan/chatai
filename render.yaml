@@ -2,7 +2,7 @@ services:
   - type: web
     name: sigmachat
     runtime: node
-    plan: starter
+    plan: standard   # 2GB / 1 CPU, always-on (upgraded from starter 2026-07-08)
     # --include=dev is required: NODE_ENV=production (below) makes npm skip
     # devDependencies, but the build needs typescript/tailwindcss/postcss/@types
     # (all devDeps). Without them Next can't read the tsconfig "@/" path alias
