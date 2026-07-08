@@ -662,9 +662,9 @@ export function InboxClient({ userId }: { userId: string }) {
                 <div className="flex gap-2.5 items-center">
                   <div className="relative shrink-0">
                     <Avatar name={c.customer_name} src={c.customer_avatar} size="md" />
-                    <div className="absolute -bottom-0.5 -right-0.5 ring-2 ring-white rounded-full">
-                      <ChannelIcon channel={c.channel} size="xs" />
-                    </div>
+                    <span className="absolute -bottom-0.5 -right-0.5 flex">
+                      <ChannelIcon channel={c.channel} size="xs" className="ring-2 ring-white" />
+                    </span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center gap-2">
