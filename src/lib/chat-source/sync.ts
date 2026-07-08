@@ -226,7 +226,7 @@ export interface SyncShopResult {
  */
 export async function syncShop(
   shopId: string,
-  opts: { maxPages?: number; sinceDays?: number; maxMsgPagesPerConv?: number } = {},
+  opts: { maxPages?: number; sinceDays?: number; maxMsgPagesPerConv?: number; reseekDays?: number } = {},
 ): Promise<SyncShopResult> {
   const sb = createAdminClient();
   const maxPages = opts.maxPages ?? 3;
@@ -246,7 +246,14 @@ export async function syncShop(
   const nowMs = Date.now();
   const baselineMs = nowMs - sinceDays * 86400 * 1000;
   let cursor: string | undefined = shop?.sync_cursor || undefined;
-  if (!cursor) cursor = String(baselineMs * 1_000_000); // ms → ns
+  if (opts.reseekDays != null) {
+    // Recent-first mode: ALWAYS seek to (now − reseekDays) and walk to the newest,
+    // so the latest chats are captured every run (instead of slowly filling the
+    // backlog oldest-first and reaching "now" last).
+    cursor = String((nowMs - opts.reseekDays * 86400 * 1000) * 1_000_000);
+  } else if (!cursor) {
+    cursor = String(baselineMs * 1_000_000); // ms → ns
+  }
   let convCount = 0;
   let msgCount = 0;
   let caughtUp = shop?.caught_up ?? false;
@@ -418,7 +425,7 @@ let _rrIndex = 0;
 let _rrShops: string[] = [];
 
 /** Sync just the NEXT shop in rotation (light — for the in-process scheduler). */
-export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<SyncShopResult | null> {
+export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number; reseekDays?: number } = {}): Promise<SyncShopResult | null> {
   const sb = createAdminClient();
   // Refresh the shop directory once per full cycle.
   if (_rrIndex <= 0 || _rrShops.length === 0) {
@@ -430,26 +437,24 @@ export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number
   if (!_rrShops.length) return null;
   const shopId = _rrShops[_rrIndex % _rrShops.length];
   _rrIndex = (_rrIndex + 1) % _rrShops.length;
-  // Behind shops (cursor hasn't reached "now") walk aggressively to catch up fast;
-  // caught-up shops just check the tail cheaply for new messages.
-  const { data: srow } = await sb.from('chat_shops').select('caught_up').eq('shop_id', shopId).maybeSingle();
-  const pages = opts.maxPages ?? (srow?.caught_up ? 2 : 12);
+  // Recent-first: each visit re-seeks to the last few days and walks to the newest,
+  // so the latest chats are always present (up to 40 pages ≈ 800 recent convs).
   try {
-    return await syncShop(shopId, { maxPages: pages, sinceDays: opts.sinceDays ?? 7 });
+    return await syncShop(shopId, { reseekDays: opts.reseekDays ?? 4, maxPages: opts.maxPages ?? 40 });
   } catch {
     return { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
   }
 }
 
-/** Sync every known Shopee shop by a small number of pages (round-robin catch-up). */
-export async function syncAllShops(opts: { maxPagesPerShop?: number; sinceDays?: number } = {}): Promise<SyncShopResult[]> {
+/** Sync every shop, recent-first (grab the newest chats), for the manual "ซิงค์" button + cron endpoint. */
+export async function syncAllShops(opts: { maxPagesPerShop?: number; sinceDays?: number; reseekDays?: number } = {}): Promise<SyncShopResult[]> {
   const sb = createAdminClient();
   await syncShops();
   const { data: shops } = await sb.from('chat_shops').select('shop_id').eq('platform', 'shopee');
   const results: SyncShopResult[] = [];
   for (const s of shops || []) {
     try {
-      results.push(await syncShop(s.shop_id, { maxPages: opts.maxPagesPerShop ?? 2, sinceDays: opts.sinceDays ?? 7 }));
+      results.push(await syncShop(s.shop_id, { reseekDays: opts.reseekDays ?? 2, maxPages: opts.maxPagesPerShop ?? 4 }));
     } catch (e) {
       results.push({ shop_id: s.shop_id, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 });
     }
