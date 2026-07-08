@@ -411,6 +411,32 @@ export async function ingestConversation(shopId: string, extConvId: string): Pro
   return { ok: true, conversation_id: dbConvId, messages: inserted };
 }
 
+// Round-robin state for the lightweight in-process scheduler: sync ONE shop per
+// tick so a constrained instance (Render Starter 512MB) never gets overloaded by
+// a full 17-shop sweep at once.
+let _rrIndex = 0;
+let _rrShops: string[] = [];
+
+/** Sync just the NEXT shop in rotation (light — for the in-process scheduler). */
+export async function syncNextShop(opts: { maxPages?: number; sinceDays?: number } = {}): Promise<SyncShopResult | null> {
+  const sb = createAdminClient();
+  // Refresh the shop directory once per full cycle.
+  if (_rrIndex <= 0 || _rrShops.length === 0) {
+    try { await syncShops(); } catch { /* keep going with cached list */ }
+    const { data } = await sb.from('chat_shops').select('shop_id').eq('platform', 'shopee');
+    _rrShops = (data || []).map((r: any) => String(r.shop_id));
+    _rrIndex = 0;
+  }
+  if (!_rrShops.length) return null;
+  const shopId = _rrShops[_rrIndex % _rrShops.length];
+  _rrIndex = (_rrIndex + 1) % _rrShops.length;
+  try {
+    return await syncShop(shopId, { maxPages: opts.maxPages ?? 2, sinceDays: opts.sinceDays ?? 7 });
+  } catch {
+    return { shop_id: shopId, brand: null, conversations: 0, messages: 0, caught_up: false, pages: 0 };
+  }
+}
+
 /** Sync every known Shopee shop by a small number of pages (round-robin catch-up). */
 export async function syncAllShops(opts: { maxPagesPerShop?: number; sinceDays?: number } = {}): Promise<SyncShopResult[]> {
   const sb = createAdminClient();

@@ -17,18 +17,19 @@ export async function register() {
   if (process.env.NODE_ENV !== 'production') return;  // don't auto-sync in local dev
   if (process.env.DISABLE_CRON === '1') return;
 
-  const INTERVAL_MS = 10 * 60 * 1000; // every 10 minutes
+  const INTERVAL_MS = 2 * 60 * 1000; // every 2 minutes, ONE shop (round-robin)
   let running = false;
 
   const tick = async () => {
     if (running) return; // never overlap runs
     running = true;
     try {
-      const { syncAllShops } = await import('@/lib/chat-source/sync');
-      const res = await syncAllShops({ maxPagesPerShop: 1, sinceDays: 7 });
-      const convs = res.reduce((s, x) => s + (x?.conversations || 0), 0);
-      const msgs = res.reduce((s, x) => s + (x?.messages || 0), 0);
-      console.log(`[cron] sync ok — +${convs} conversations, +${msgs} messages across ${res.length} shops`);
+      // Light: sync only the next shop in rotation so a small instance stays
+      // responsive (a full 17-shop sweep at once overloaded Render Starter →
+      // "เชื่อมต่อสะดุด"). Over ~34 min the whole fleet is covered, then repeats.
+      const { syncNextShop } = await import('@/lib/chat-source/sync');
+      const r = await syncNextShop({ maxPages: 2, sinceDays: 7 });
+      if (r) console.log(`[cron] synced ${r.brand ?? r.shop_id}: +${r.conversations} conv, +${r.messages} msg`);
     } catch (e) {
       console.error('[cron] sync failed:', (e as Error)?.message);
     } finally {
@@ -36,8 +37,7 @@ export async function register() {
     }
   };
 
-  // First run shortly after boot, then on the interval.
-  setTimeout(tick, 20_000);
+  setTimeout(tick, 15_000);
   setInterval(tick, INTERVAL_MS);
-  console.log('[cron] in-process sync scheduler started (every 10 min)');
+  console.log('[cron] in-process sync scheduler started (1 shop / 2 min)');
 }

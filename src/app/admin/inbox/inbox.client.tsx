@@ -100,15 +100,16 @@ export function InboxClient({ userId }: { userId: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [loadError, setLoadError] = useState(false);
+  const failRef = useRef(0);
   const loadConvos = useCallback(async () => {
     try {
       const r = await fetch('/api/conversations');
       const d = await r.json();
       // Only replace the list with a real array. A transient error response
       // ({error:...}) must NOT wipe the inbox (that caused "list appears then vanishes").
-      if (Array.isArray(d)) { setConvos(d); setLoadError(false); }
-      else setLoadError(true);
-    } catch { setLoadError(true); }
+      if (Array.isArray(d)) { setConvos(d); failRef.current = 0; setLoadError(false); }
+      else { failRef.current += 1; if (failRef.current >= 3) setLoadError(true); }
+    } catch { failRef.current += 1; if (failRef.current >= 3) setLoadError(true); }
   }, []);
 
   useEffect(() => {
@@ -273,7 +274,7 @@ export function InboxClient({ userId }: { userId: string }) {
 
   // Cheap list refresh (reflects DB changes even without a full sync).
   useEffect(() => {
-    const id = setInterval(() => { loadConvos(); }, 15000);
+    const id = setInterval(() => { loadConvos(); }, 30000);
     return () => clearInterval(id);
   }, [loadConvos]);
 
