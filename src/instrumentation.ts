@@ -17,27 +17,29 @@ export async function register() {
   if (process.env.NODE_ENV !== 'production') return;  // don't auto-sync in local dev
   if (process.env.DISABLE_CRON === '1') return;
 
-  const INTERVAL_MS = 90 * 1000; // every 90s, ONE shop (round-robin) — full fleet ≈ every 25 min
+  const INTERVAL_MS = 3 * 60 * 1000; // full sweep of ALL shops every 3 min
   let running = false;
 
   const tick = async () => {
-    if (running) return; // never overlap runs
+    if (running) return; // never overlap runs (a sweep takes ~1.5–2 min at the API rate cap)
     running = true;
     try {
-      // Light: sync only the next shop in rotation so a small instance stays
-      // responsive (a full 17-shop sweep at once overloaded Render Starter →
-      // "เชื่อมต่อสะดุด"). Over ~34 min the whole fleet is covered, then repeats.
-      const { syncNextShop } = await import('@/lib/chat-source/sync');
-      const r = await syncNextShop({ sinceDays: 7 }); // page count auto: aggressive if behind, cheap if caught up
-      if (r) console.log(`[cron] synced ${r.brand ?? r.shop_id}: +${r.conversations} conv, +${r.messages} msg`);
+      // Sweep EVERY shop recent-first (last 24h → newest). Bounded by the Shopee
+      // read cap (~120/min), a full sweep is ~1.5–2 min, so all brands refresh
+      // together roughly every 3 min (vs ~20 min with one-shop-per-tick).
+      const { syncAllShops } = await import('@/lib/chat-source/sync');
+      const res = await syncAllShops({ reseekDays: 1, maxPagesPerShop: 15 });
+      const convs = res.reduce((s, x) => s + (x?.conversations || 0), 0);
+      const msgs = res.reduce((s, x) => s + (x?.messages || 0), 0);
+      console.log(`[cron] full sweep done — ${res.length} shops, +${convs} conv, +${msgs} msg`);
     } catch (e) {
-      console.error('[cron] sync failed:', (e as Error)?.message);
+      console.error('[cron] sweep failed:', (e as Error)?.message);
     } finally {
       running = false;
     }
   };
 
-  setTimeout(tick, 15_000);
+  setTimeout(tick, 10_000);
   setInterval(tick, INTERVAL_MS);
-  console.log('[cron] in-process sync scheduler started (1 shop / 2 min)');
+  console.log('[cron] in-process sync scheduler started (full sweep / 3 min)');
 }

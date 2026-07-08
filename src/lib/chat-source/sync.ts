@@ -47,7 +47,7 @@ function brandDisplayName(slug: string | null | undefined): string {
 
 const NANO = 1_000_000_000; // ns per second
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const READ_SPACING_MS = 350; // stay well under 120 reads/min
+const READ_SPACING_MS = 520; // ~115 reads/min — just under the 120/min chat_read cap
 
 type Admin = ReturnType<typeof createAdminClient>;
 
