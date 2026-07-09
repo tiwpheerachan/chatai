@@ -22,7 +22,7 @@ function deriveCondition(orders: BuyerOrder[]): string | null {
   if (s === 'SHIPPED' || s === 'TO_CONFIRM_RECEIVE') return 'to_receive';
   return null;
 }
-const PRODUCT_HINTS = ['ราคา', 'กี่บาท', 'บาท', 'มีของ', 'มีไหม', 'พร้อมส่ง', 'สต็อก', 'สต๊อก', 'stock', 'รุ่น', 'สี', 'ไซส์', 'size', 'โปร', 'ส่วนลด', 'รับประกัน'];
+const PRODUCT_HINTS = ['ราคา', 'กี่บาท', 'บาท', 'มีของ', 'มีไหม', 'พร้อมส่ง', 'สต็อก', 'สต๊อก', 'stock', 'รุ่น', 'สี', 'ไซส์', 'size', 'โปร', 'ส่วนลด', 'รับประกัน', 'แนะนำ', 'อยากได้', 'สนใจ', 'ซื้อ', 'ตัวไหน', 'อันไหน', 'ต่างกัน', 'เปรียบเทียบ', 'รุ่นไหน'];
 const ORDER_HINTS = /(ของ|พัสดุ|จัดส่ง|ส่ง|สถานะ|เลขพัสดุ|ถึงไหน|กี่วัน|ถึงยัง|เมื่อไหร่|ออเดอร์|คำสั่งซื้อ|order|track|ยกเลิก|คืนเงิน|คืนสินค้า|เคลม)/i;
 
 const SYSTEM_PROMPT_DEFAULT = `คุณคือ Aria — ผู้ช่วยลูกค้าของร้านค้าออนไลน์ พูดสุภาพ เป็นกันเอง ลงท้ายด้วย "ค่ะ" หรือ "ครับ" ตามที่เหมาะสม
@@ -153,7 +153,7 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
   return out;
 }
 
-export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; }
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; }
 
 export async function draftReply(opts: {
   userMessage: string;
@@ -231,7 +231,8 @@ export async function draftReply(opts: {
 สำคัญที่สุด: ให้ "เหมือนคนพิมพ์จริง" มากที่สุด อย่าให้ดูเหมือนบอท (Shopee แบนบอท)
 วิธีพิมพ์ให้เหมือนคน:
 - **อ่านบทสนทนาทั้งหมดก่อน** เข้าใจว่าลูกค้ากำลังคุยเรื่องอะไรอยู่ แล้วตอบให้ต่อเนื่องกับบริบท ไม่ใช่ดูแค่ข้อความล่าสุด
-- เป็นกันเอง เหมือนคุยจริงในมือถือ ไม่ทางการหรือเป๊ะเกินไป ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็นจริงๆ
+- สุภาพ เรียบร้อย ดูเป็นมืออาชีพนิดหน่อย แต่ยังอบอุ่นเป็นกันเองเหมือนคนจริง (ไม่แข็งทื่อเป็นบอท ไม่เป๊ะเกินไป) ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็น
+- ถ้าลูกค้าถามหา/สนใจสินค้า หรือกำลังเลือกไม่ถูก ให้แนะนำสินค้าที่ร้านมีจริง (จาก "สินค้าในร้าน" ด้านล่าง) พร้อมเหตุผลสั้นๆ — ระบบจะแนบการ์ดสินค้าให้แอดมินกดส่งได้
 - โทน ความยาว คำลงท้าย (ค่ะ/นะคะ/จ้า) และอีโมจิ ให้เหมือนตัวอย่างจริงของแอดมินด้านล่าง
 - ความยาวไม่ตายตัว: บางทีหลายประโยค/หลายบรรทัดสั้นๆ (คั่นด้วยขึ้นบรรทัดใหม่) บางทีบรรทัดเดียว — เอาที่เป็นธรรมชาติตามสถานการณ์ ไม่ต้องยาวหรือหลายบรรทัดทุกครั้ง
 - ใส่คำอุทาน/รับคำแบบธรรมชาติได้ เช่น "ได้เลยค่ะ" "โอเคค่ะ" "จ้า" "สักครู่นะคะ" ตามจังหวะการคุย
@@ -305,6 +306,8 @@ export async function draftReply(opts: {
     reason,
     usedExamples: examples.length,
     used,
+    // Real products to offer/send when the customer is asking about products.
+    suggestedProducts: (products || []).slice(0, 3).map((p: any) => ({ item_id: p.item_id, item_name: p.item_name, price: p.price, image_url: p.image_url, in_stock: p.in_stock })),
   };
 }
 

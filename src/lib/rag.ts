@@ -78,6 +78,8 @@ export async function retrieve(
 
 const kbCache = new Map<string, { t: number; v: any[] }>();
 const KB_TTL = 5 * 60 * 1000;
+/** Drop the cached KB doc set for a brand (call after inserting/editing KB). */
+export function bustKbCache(brandId: string | null) { kbCache.delete(brandId || '_global'); kbCache.delete('_global'); }
 async function getKbDocs(sb: ReturnType<typeof createAdminClient>, brandId: string | null): Promise<any[]> {
   const ck = brandId || '_global';
   const cached = kbCache.get(ck);

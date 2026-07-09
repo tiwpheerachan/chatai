@@ -1125,6 +1125,21 @@ export function InboxClient({ userId }: { userId: string }) {
                     ) : (
                       <div className="text-[11px] text-slate-400">— ไม่มีข้อความร่าง ให้แอดมินตอบเอง —</div>
                     )}
+                    {(aiDraft.suggestedProducts?.length ?? 0) > 0 && (
+                      <div className="pt-1 space-y-1">
+                        <div className="text-[10px] text-slate-400 font-semibold flex items-center gap-1"><Fi name="box-open" className="text-[11px]" /> สินค้าที่แนะนำได้ (กดเพื่อส่งการ์ด)</div>
+                        {aiDraft.suggestedProducts.map((p: any) => (
+                          <button key={p.item_id} onClick={() => sendItemCard(p.item_id)} disabled={sending}
+                            className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-left hover:border-indigo-300 hover:bg-indigo-50/40 disabled:opacity-50">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            {p.image_url ? <img src={p.image_url} alt="" className="w-7 h-7 rounded object-cover shrink-0" /> : <div className="w-7 h-7 rounded bg-slate-100 shrink-0" />}
+                            <span className="flex-1 min-w-0 text-[11px] text-slate-700 line-clamp-1">{p.item_name}</span>
+                            <span className="text-[10px] font-semibold text-indigo-600 shrink-0">฿{Number(p.price).toLocaleString()}</span>
+                            <Fi name="paper-plane" className="text-[11px] text-slate-300 shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

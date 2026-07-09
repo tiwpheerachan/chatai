@@ -5,6 +5,7 @@ import { addMessage } from '@/lib/conversations';
 import { parseBody, sendMessageSchema, safeUuid } from '@/lib/validation';
 import { logAudit, reqIp } from '@/lib/audit';
 import { sendText, ChatSourceError } from '@/lib/chat-source/client';
+import { learnFromAdminReply } from '@/lib/learn';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   // Read via the authenticated client so RLS enforces brand access.
   const { data: conv } = await ctx.sb
     .from('conversations')
-    .select('channel, external_id, shop_id, buyer_id, customer:customers(channel_user_id)')
+    .select('channel, external_id, shop_id, buyer_id, brand_id, customer:customers(channel_user_id)')
     .eq('id', params.id)
     .single();
 
@@ -75,6 +76,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     targetType: 'conversation', targetId: params.id,
     details: { channel, chars: body.text.length }, ip: reqIp(req),
   });
+
+  // SELF-LEARN: if this reply answered a question the KB didn't cover, remember it
+  // (correct info straight from the admin). Fire-and-forget — never blocks the send.
+  learnFromAdminReply(params.id, (conv as any).brand_id, body.text).catch(() => {});
 
   return NextResponse.json(msg);
 }
