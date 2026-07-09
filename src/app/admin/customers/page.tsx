@@ -1,21 +1,29 @@
 import { Topbar } from '@/components/layout/topbar';
 import { Card } from '@/components/ui/card';
-import { createClient } from '@/lib/supabase/server';
+import { Avatar } from '@/components/ui/avatar';
+import { getCurrentContext } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import { adminSb, withBrandScope } from '@/lib/analytics-scope';
 import { CHANNEL_META } from '@/lib/utils';
 import Link from 'next/link';
 import type { Customer } from '@/types/database';
 
+export const dynamic = 'force-dynamic';
+
 export default async function CustomersPage() {
-  const supabase = createClient();
-  const { data: customers } = await supabase
-    .from('customers')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(100);
+  const ctx = await getCurrentContext();
+  if (!ctx) redirect('/login');
+  // Admin client + code-side brand scope — the customers table is large and its RLS
+  // policy runs per-row, so an RLS-bound select times out / returns nothing at scale.
+  const sb = adminSb();
+  const [{ data: customers }, { count: total }] = await Promise.all([
+    withBrandScope(sb.from('customers').select('*').order('created_at', { ascending: false }).limit(100), ctx.scope),
+    withBrandScope(sb.from('customers').select('id', { count: 'exact', head: true }), ctx.scope),
+  ]);
 
   return (
     <>
-      <Topbar title="Customers" subtitle="CRM 360° — ลูกค้าทั้งหมด" />
+      <Topbar title="Customers" subtitle={`CRM 360° — ลูกค้าทั้งหมด ${(total || 0).toLocaleString()} ราย (แสดง 100 ล่าสุด)`} />
       <div className="p-6 overflow-y-auto scroll-thin flex-1">
         <Card>
           <div className="p-4 border-b border-slate-200 flex justify-between items-center">
@@ -40,7 +48,7 @@ export default async function CustomersPage() {
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <Link href={`/admin/customers/${c.id}`} className="flex items-center gap-2">
-                        <span className="text-xl">{c.avatar}</span>
+                        <Avatar name={c.display_name} src={c.avatar} size="sm" />
                         <span className="font-semibold text-indigo-600 hover:underline">{c.display_name}</span>
                       </Link>
                     </td>

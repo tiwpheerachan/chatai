@@ -1,17 +1,23 @@
 import { Topbar } from '@/components/layout/topbar';
 import { Stat } from '@/components/ui/stat';
-import { createClient } from '@/lib/supabase/server';
+import { getCurrentContext } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import { adminSb, withBrandScope, scopedMessages } from '@/lib/analytics-scope';
 import { Inbox, CheckCheck, Bot, Users } from 'lucide-react';
 import { AnalyticsCharts } from './charts.client';
 
+export const dynamic = 'force-dynamic';
+
 export default async function AnalyticsPage() {
-  const supabase = createClient();
+  const ctx = await getCurrentContext();
+  if (!ctx) redirect('/login');
+  const sb = adminSb();
   const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
   const [{ count: total }, { count: solved }, { count: aiMsgs }, { count: humanMsgs }] = await Promise.all([
-    supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('created_at', since),
-    supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('status', 'solved').gte('created_at', since),
-    supabase.from('messages').select('id', { count: 'exact', head: true }).eq('sender_type', 'ai').gte('created_at', since),
-    supabase.from('messages').select('id', { count: 'exact', head: true }).eq('sender_type', 'agent').gte('created_at', since),
+    withBrandScope(sb.from('conversations').select('id', { count: 'exact', head: true }).gte('created_at', since), ctx.scope),
+    withBrandScope(sb.from('conversations').select('id', { count: 'exact', head: true }).eq('status', 'solved').gte('created_at', since), ctx.scope),
+    scopedMessages(ctx.scope).eq('sender_type', 'ai').gte('created_at', since),
+    scopedMessages(ctx.scope).eq('sender_type', 'agent').gte('created_at', since),
   ]);
 
   return (

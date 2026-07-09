@@ -2,6 +2,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { ChannelIcon } from '@/components/ui/channel-icon';
 import { Fi } from '@/components/ui/fi';
 import { getCurrentContext } from '@/lib/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { redirect } from 'next/navigation';
 import { CHANNEL_META, formatRelativeTime, brandIcon } from '@/lib/utils';
 import { DashboardCharts } from './charts.client';
@@ -14,8 +15,12 @@ const CARD = 'bg-white rounded-[26px] border border-slate-100 shadow-[0_2px_14px
 export default async function DashboardPage() {
   const ctx = await getCurrentContext();
   if (!ctx) redirect('/login');
-  const sb = ctx.sb;
+  // Admin client (bypass per-row RLS — at 100k+ rows the RLS policy times out and
+  // the counts/lists came back empty; this is read-only overview data).
+  const sb = createAdminClient();
   const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+  const cCount = () => sb.from('conversations').select('id', { count: 'exact', head: true });
+  const mCount = () => sb.from('messages').select('id', { count: 'exact', head: true });
 
   const [
     { count: total },
@@ -24,40 +29,42 @@ export default async function DashboardPage() {
     { count: msgs7d },
     { count: customerMsgs },
     { data: recent },
-    { data: channelRows },
-    { data: brandRows },
+    { data: brands },
   ] = await Promise.all([
-    sb.from('conversations').select('id', { count: 'exact', head: true }),
-    sb.from('conversations').select('id', { count: 'exact', head: true }).gt('unread', 0),
-    sb.from('conversations').select('id', { count: 'exact', head: true }).eq('status', 'open'),
-    sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', since),
-    sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', since).eq('sender_type', 'customer'),
-    sb
-      .from('conversations')
+    cCount(),
+    cCount().gt('unread', 0),
+    cCount().eq('status', 'open'),
+    mCount().gte('created_at', since),
+    mCount().gte('created_at', since).eq('sender_type', 'customer'),
+    sb.from('conversations')
       .select('id,channel,status,priority,unread,last_message_at,customer:customers(display_name,avatar),brand:brands(name,color)')
       .order('last_message_at', { ascending: false })
       .limit(7),
-    sb.from('conversations').select('channel'),
-    sb.from('conversations').select('unread, brand:brands(name,color)'),
+    sb.from('brands').select('id,name,color'),
   ]);
 
-  // ---- by channel ----
-  const channelCounts: Record<string, number> = {};
-  for (const r of (channelRows as { channel: string }[] | null) || []) channelCounts[r.channel] = (channelCounts[r.channel] || 0) + 1;
-  const channelArr = Object.entries(channelCounts).sort((a, b) => b[1] - a[1]);
+  // ---- by brand: a real GROUP BY via per-brand count queries (fetching all rows
+  //      would hit PostgREST's 1000-row cap and undercount at 129k conversations). ----
+  const brandStats = await Promise.all(((brands as any[]) || []).map(async (b) => {
+    const [{ count }, { count: unread }] = await Promise.all([
+      cCount().eq('brand_id', b.id),
+      cCount().eq('brand_id', b.id).gt('unread', 0),
+    ]);
+    return { name: b.name as string, color: b.color as string | null, count: count || 0, unread: unread || 0 };
+  }));
+  const brandArr: [string, { count: number; unread: number; color: string | null }][] = brandStats
+    .filter(b => b.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .map(b => [b.name, { count: b.count, unread: b.unread, color: b.color }]);
+  const brandMax = Math.max(1, ...brandArr.map(([, v]) => v.count));
+  const brandsActive = brandArr.length;
+
+  // ---- by channel (real counts; all synced convos are shopee) ----
+  const CHANNELS = ['shopee', 'tiktok', 'lazada', 'line', 'facebook', 'instagram', 'web'];
+  const chanCounts = await Promise.all(CHANNELS.map(async (ch) => ({ ch, n: (await cCount().eq('channel', ch)).count || 0 })));
+  const channelArr = chanCounts.filter(c => c.n > 0).sort((a, b) => b.n - a.n).map(c => [c.ch, c.n] as [string, number]);
   const channelMax = Math.max(1, ...channelArr.map(([, v]) => v));
 
-  // ---- by brand (the multi-brand insight) ----
-  const brandMap: Record<string, { count: number; unread: number; color: string | null }> = {};
-  for (const r of (brandRows as any[]) || []) {
-    const name = r.brand?.name || 'ไม่ระบุแบรนด์';
-    if (!brandMap[name]) brandMap[name] = { count: 0, unread: 0, color: r.brand?.color ?? null };
-    brandMap[name].count++;
-    brandMap[name].unread += r.unread || 0;
-  }
-  const brandArr = Object.entries(brandMap).sort((a, b) => b[1].count - a[1].count);
-  const brandMax = Math.max(1, ...brandArr.map(([, v]) => v.count));
-  const brandsActive = brandArr.filter(([n]) => n !== 'ไม่ระบุแบรนด์').length;
   const teamRate = msgs7d ? Math.round(((msgs7d - (customerMsgs || 0)) / msgs7d) * 100) : 0;
 
   const stats = [

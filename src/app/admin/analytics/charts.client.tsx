@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { CHANNEL_META } from '@/lib/utils';
 
 export function AnalyticsCharts() {
-  const [series, setSeries] = useState<{ day: string; ai: number; human: number }[]>([]);
+  const [series, setSeries] = useState<{ day: string; customer: number; agent: number }[]>([]);
   const [chans, setChans] = useState<{ channel: string; n: number }[]>([]);
   const [topics, setTopics] = useState<Record<string, number>>({});
 
@@ -26,8 +26,8 @@ export function AnalyticsCharts() {
           <BarChart data={series}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="day" /><YAxis /><Tooltip /><Legend />
-            <Bar dataKey="ai" name="AI" fill="#6366f1" />
-            <Bar dataKey="human" name="Human" fill="#94a3b8" />
+            <Bar dataKey="customer" name="ลูกค้า" fill="#6366f1" />
+            <Bar dataKey="agent" name="ทีม/แอดมิน" fill="#94a3b8" />
           </BarChart>
         </ResponsiveContainer>
       </Card>
