@@ -279,15 +279,28 @@ export function InboxClient({ userId }: { userId: string }) {
       .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
       .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
     loadTasks(id);
-    // Recommended products (best-sellers of this shop) for the สินค้า tab.
-    fetch(`/api/conversations/${id}/products`).then(r => r.json())
-      .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
-      .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
-    // Ongoing vouchers for the คูปอง tab.
-    fetch(`/api/conversations/${id}/vouchers`).then(r => r.json())
-      .then(d => { if (id === activeIdRef.current) setVouchers({ list: Array.isArray(d?.vouchers) ? d.vouchers : [], scopeMissing: !!d?.scopeMissing }); })
-      .catch(() => { if (id === activeIdRef.current) setVouchers({ list: [], scopeMissing: false }); });
+    // NOTE: products + vouchers are NOT fetched here — they hit the rate-limited
+    // Shopee API and most opens never look at those tabs. They load lazily the
+    // first time their tab is viewed (see the effect below) and are cached per
+    // conversation, so opening a chat stays light + fast.
   }, [activeId, loadTasks]);
+
+  // Lazy-load the สินค้า / คูปอง tab data only when the tab is actually opened
+  // (once per conversation — cached in state until the conversation changes).
+  useEffect(() => {
+    const id = activeId;
+    if (!id) return;
+    if (panelTab === 'products' && recProds === null) {
+      fetch(`/api/conversations/${id}/products`).then(r => r.json())
+        .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
+        .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
+    }
+    if (panelTab === 'coupon' && vouchers === null) {
+      fetch(`/api/conversations/${id}/vouchers`).then(r => r.json())
+        .then(d => { if (id === activeIdRef.current) setVouchers({ list: Array.isArray(d?.vouchers) ? d.vouchers : [], scopeMissing: !!d?.scopeMissing }); })
+        .catch(() => { if (id === activeIdRef.current) setVouchers({ list: [], scopeMissing: false }); });
+    }
+  }, [panelTab, activeId, recProds, vouchers]);
 
   const sendVoucherCard = async (v: any) => {
     if (!active || sending) return;
@@ -328,19 +341,27 @@ export function InboxClient({ userId }: { userId: string }) {
     setDraft(''); setAttachOpen(false); setCardForm(null); setNoteMode(false);
   }, []);
 
-  // Supabase realtime
+  // Supabase realtime — subscribe ONCE. A cron sweep can insert hundreds of
+  // messages in a burst; firing loadConvos/loadThread on every INSERT would storm
+  // the UI. Debounce so a burst collapses into a single refresh. Uses activeIdRef
+  // (not activeId) so switching conversations doesn't tear down + resubscribe.
+  const rtConvosTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rtThreadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const channel = supabase
       .channel('messages-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        loadConvos();
-        if (activeId && (payload.new as Message).conversation_id === activeId) {
-          loadThread(activeId);
+        if (rtConvosTimer.current) clearTimeout(rtConvosTimer.current);
+        rtConvosTimer.current = setTimeout(() => loadConvos(), 1200);
+        const cid = (payload.new as Message).conversation_id;
+        if (activeIdRef.current && cid === activeIdRef.current) {
+          if (rtThreadTimer.current) clearTimeout(rtThreadTimer.current);
+          rtThreadTimer.current = setTimeout(() => { if (activeIdRef.current) loadThread(activeIdRef.current); }, 700);
         }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [activeId, loadConvos, supabase, loadThread]);
+  }, [loadConvos, supabase, loadThread]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
