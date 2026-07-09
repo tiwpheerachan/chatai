@@ -29,6 +29,7 @@ const NAV: NavGroup[] = [
     title: 'AI & เนื้อหา',
     items: [
       { href: '/admin/knowledge-base', label: 'Knowledge Base', icon: 'book-alt', perm: 'kb.read' },
+      { href: '/admin/playbook', label: 'ฉากสถานการณ์', icon: 'sparkles', perm: 'chat.read' },
       { href: '/admin/ai-bot', label: 'AI Bot', icon: 'robot', perm: 'kb.read' },
       { href: '/admin/macros', label: 'Macros', icon: 'bolt', perm: 'macro.read' },
     ],

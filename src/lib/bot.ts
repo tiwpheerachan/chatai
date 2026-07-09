@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { createAdminClient } from './supabase/admin';
 import { retrieve, type RetrievedDoc } from './rag';
+import { getPlaybook, matchScenario, type PlaybookScenario } from './playbook';
 import type { Message } from '@/types/database';
 
 const SYSTEM_PROMPT_DEFAULT = `คุณคือ Aria — ผู้ช่วยลูกค้าของร้านค้าออนไลน์ พูดสุภาพ เป็นกันเอง ลงท้ายด้วย "ค่ะ" หรือ "ครับ" ตามที่เหมาะสม
@@ -114,12 +115,32 @@ export async function draftReply(opts: {
   const { userMessage, brand_id = null, history = [], customerName = '' } = opts;
   const sb = createAdminClient();
 
-  const [examples, docs] = await Promise.all([
+  const [examples, docs, scenarios] = await Promise.all([
     getAdminStyleExamples(sb, brand_id),
     retrieve(userMessage, { brand_id, k: 3 }),
+    getPlaybook(sb, brand_id).catch(() => [] as PlaybookScenario[]),
   ]);
   const contextDocs = docs.filter(d => d.similarity > 0.15).slice(0, 3);
   const topSim = docs[0]?.similarity || 0;
+
+  // ---- Playbook: follow the admin-defined scenario/strategy if the question matches ----
+  const matched = matchScenario(userMessage, scenarios);
+  const strategies = (matched?.scenario.strategies || []).filter(s => s.enabled);
+  const replyStrategies = strategies.filter(s => s.action === 'reply' && (s.response || '').trim());
+  const onlyHandoff = strategies.length > 0 && replyStrategies.length === 0;
+  let playbookBlock = '';
+  if (matched && replyStrategies.length) {
+    playbookBlock = `\n\n=== สคริปต์ที่ร้านกำหนดไว้สำหรับฉาก "${matched.scenario.title}" (ใช้เป็นคำตอบหลัก ปรับถ้อยคำเล็กน้อยให้เข้ากับลูกค้า เลือกอันที่ตรงเงื่อนไขที่สุด) ===\n${replyStrategies.map((s, i) => `${i + 1}. ${s.order_condition ? `[เงื่อนไข: ${s.order_condition}] ` : ''}${s.response}`).join('\n')}`;
+  }
+  // If the matched scenario is handoff-only → a human should take this.
+  if (matched && onlyHandoff) {
+    return {
+      text: '', sources: [], confidence: 0.3, intent: 'playbook-handoff',
+      handoff: true, needsHuman: true,
+      reason: `ฉาก “${matched.scenario.title}” ตั้งไว้ให้โอนพนักงาน${strategies[0]?.label ? ` (${strategies[0].label})` : ''}`,
+      usedExamples: examples.length,
+    };
+  }
 
   const styleBlock = examples.length
     ? `\n\n=== ตัวอย่างวิธีที่แอดมินตอบจริง (เลียนแบบโทน สำนวน ความยาว คำลงท้าย และอีโมจิแบบนี้) ===\n${examples.map((e, i) => `${i + 1}. ${e}`).join('\n')}`
@@ -131,10 +152,11 @@ export async function draftReply(opts: {
   const system = `คุณเป็นผู้ช่วย "ร่าง" คำตอบให้แอดมินร้านค้าออนไลน์ — แอดมิน (คนจริง) จะเป็นผู้ตรวจและกดส่งเอง คุณไม่ได้ตอบแทนและห้ามส่งเอง
 เป้าหมาย: ร่างคำตอบที่ฟังดูเป็นธรรมชาติเหมือนแอดมินคนนี้พิมพ์เอง (ไม่ใช่บอท) โดยเลียนแบบ "สไตล์" จากตัวอย่างจริงด้านล่าง
 กติกา:
+- ถ้ามี "สคริปต์ที่ร้านกำหนด" ด้านล่าง ให้ยึดตามนั้นเป็นหลัก (ปรับถ้อยคำได้เล็กน้อยให้เข้ากับลูกค้า)
 - เลียนแบบสำนวน/โทน/ความยาว/คำลงท้าย/อีโมจิ จากตัวอย่าง แต่เนื้อหาต้องตรงกับคำถามจริงของลูกค้าตอนนี้
 - ใช้ข้อมูลจาก Knowledge Base เป็นข้อเท็จจริงเท่านั้น ห้ามแต่งข้อมูล/ราคา/โปรขึ้นเอง
 - ถ้าคำถามต้องใช้ข้อมูลเฉพาะที่คุณไม่มีจริง (เช็คสต็อกจริง สถานะออเดอร์รายบุคคล โปรที่ไม่มีใน KB ฯลฯ) ให้ตั้ง needs_human=true แล้วร่างเป็นข้อความสั้นๆ ขอเวลาตรวจสอบให้ ในโทนของแอดมิน
-- ตอบเป็นภาษาเดียวกับลูกค้า${styleBlock}${kb}
+- ตอบเป็นภาษาเดียวกับลูกค้า${playbookBlock}${styleBlock}${kb}
 
 ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่าง>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ ภาษาไทย>"}`;
 
@@ -156,8 +178,9 @@ export async function draftReply(opts: {
     } catch { reply = raw.trim(); }
   }
   if (!reply) {
-    // No LLM configured (mock) or empty → degrade: offer KB snippet, else hand off.
-    if (contextDocs.length) { reply = contextDocs[0].content.slice(0, 280); needsHuman = false; }
+    // No LLM configured (mock) or empty → degrade gracefully.
+    if (replyStrategies.length) { reply = replyStrategies[0].response || ''; needsHuman = false; }   // use the playbook script verbatim
+    else if (contextDocs.length) { reply = contextDocs[0].content.slice(0, 280); needsHuman = false; }
     else { needsHuman = true; reason = reason || 'ไม่มีข้อมูลพอให้ร่าง — ให้แอดมินตอบเอง'; }
   }
   const confidence = needsHuman ? 0.3 : Math.min(0.95, 0.55 + topSim * 0.4);
