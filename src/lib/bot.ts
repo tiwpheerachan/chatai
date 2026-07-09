@@ -246,13 +246,20 @@ export async function draftReply(opts: {
   }
   if (!reply) {
     // No LLM configured (mock) or empty → degrade gracefully, still using real data.
+    // Only prefer the order-status line when the question is actually about the
+    // order/shipping; otherwise a knowledge-base answer is more relevant.
+    const orderIsh = /(ของ|พัสดุ|จัดส่ง|ส่ง|สถานะ|เลขพัสดุ|ถึงไหน|กี่วัน|ถึงยัง|order|track)/i.test(userMessage);
     if (replyStrategies.length) { reply = replyStrategies[0].response || ''; needsHuman = false; }   // playbook script verbatim
+    else if (orders.length && orderIsh) {
+      const o = orders[0];
+      reply = `ออเดอร์ ${o.order_sn} สถานะ: ${ORDER_STATUS_TH[o.order_status] || o.order_status} ค่ะ (สั่งเมื่อ ${o.order_date})`;
+      needsHuman = false;
+    } else if (contextDocs.length && (contextDocs[0].similarity ?? 0) > 0.2) { reply = contextDocs[0].content.slice(0, 400); needsHuman = false; }
     else if (orders.length) {
       const o = orders[0];
       reply = `ออเดอร์ ${o.order_sn} สถานะ: ${ORDER_STATUS_TH[o.order_status] || o.order_status} ค่ะ (สั่งเมื่อ ${o.order_date})`;
       needsHuman = false;
-    } else if (contextDocs.length) { reply = contextDocs[0].content.slice(0, 280); needsHuman = false; }
-    else { needsHuman = true; reason = reason || 'ไม่มีข้อมูลพอให้ร่าง — ให้แอดมินตอบเอง'; }
+    } else { needsHuman = true; reason = reason || 'ไม่มีข้อมูลพอให้ร่าง — ให้แอดมินตอบเอง'; }
   }
   // More data on hand ⇒ higher confidence; needs-human stays low.
   const dataBoost = (orders.length ? 0.15 : 0) + (products.length ? 0.1 : 0) + (matched ? 0.1 : 0);
