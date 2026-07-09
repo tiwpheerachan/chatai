@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { parseBody, conversationPatchSchema, safeUuid } from '@/lib/validation';
 import { hydrateConversation } from '@/lib/chat-source/sync';
 import { markRead } from '@/lib/chat-source/client';
@@ -30,7 +31,12 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     try { await hydrateConversation(params.id); } catch { /* leave what we have */ }
   }
 
-  const { data: messages } = await sb
+  // Read messages via the ADMIN client. Access to this thread is already proven by
+  // the RLS-scoped conversation select above (c is non-null = the user may see it).
+  // The messages RLS policy runs a subquery over the whole conversations table
+  // (100k+ rows) which times out at this scale and returned an EMPTY thread ("แชท
+  // ไม่ขึ้น"). The PK+index read below is instant.
+  const { data: messages } = await createAdminClient()
     .from('messages')
     .select('*')
     .eq('conversation_id', params.id)
