@@ -52,8 +52,12 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   // mark as read locally, and on the platform too (Shopee) only when there was unread.
   const hadUnread = ((c as any).unread ?? 0) > 0;
   await sb.from('conversations').update({ unread: 0 }).eq('id', params.id);
+  // FIRE-AND-FORGET the Shopee markRead — never block the thread response on it.
+  // The Shopee API is rate-limited and can queue for seconds behind the cron; the
+  // thread must load instantly from the DB regardless. (Render is a persistent
+  // server, so the promise finishes in the background.)
   if (hadUnread && (c as any).channel === 'shopee' && (c as any).shop_id && (c as any).external_id) {
-    try { await markRead((c as any).shop_id, (c as any).external_id); } catch { /* non-fatal */ }
+    markRead((c as any).shop_id, (c as any).external_id).catch(() => { /* non-fatal */ });
   }
 
   return NextResponse.json({ ...c, messages: messages || [], order_refs: orderRefs });

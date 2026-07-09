@@ -28,15 +28,17 @@ export async function register() {
       // read cap (~120/min), a full sweep is ~1.5–2 min, so all brands refresh
       // together roughly every 3 min (vs ~20 min with one-shop-per-tick).
       const { syncAllShops, backfillShops } = await import('@/lib/chat-source/sync');
-      const res = await syncAllShops({ reseekDays: 1, maxPagesPerShop: 15 });
+      // LIGHT recent sweep: 4 pages/shop (pageSize 50 → ~200 newest convs/shop is
+      // plenty for 24h freshness). 15 pages hammered the single CPU + rate limit
+      // every 3 min and stalled interactive requests (chat loading slowly).
+      const res = await syncAllShops({ reseekDays: 1, maxPagesPerShop: 4 });
       const convs = res.reduce((s, x) => s + (x?.conversations || 0), 0);
       const msgs = res.reduce((s, x) => s + (x?.messages || 0), 0);
       console.log(`[cron] recent sweep — ${res.length} shops, +${convs} conv, +${msgs} msg`);
 
-      // Then spend the rest of the budget backfilling shops that aren't fully
-      // caught up yet (so our conversation list matches Chat++'s full history).
-      // A few shops per tick; each finishes over successive ticks, then is skipped.
-      const bf = await backfillShops({ shops: 5, maxPagesPerShop: 30, sinceDays: 90 });
+      // Backfill any shop still catching up (all 17 are caught_up now → usually a
+      // no-op). Kept gentle so it never eats the interactive rate budget again.
+      const bf = await backfillShops({ shops: 2, maxPagesPerShop: 10, sinceDays: 30 });
       const bfConv = bf.reduce((s, x) => s + (x?.conversations || 0), 0);
       const done = bf.filter((x) => x?.caught_up).length;
       if (bf.length) console.log(`[cron] backfill — ${bf.length} shops, +${bfConv} conv, ${done} now caught up`);
