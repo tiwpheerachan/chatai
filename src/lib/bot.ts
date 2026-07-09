@@ -153,7 +153,29 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
   return out;
 }
 
-export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; }
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; sawImage?: boolean; }
+
+/** Describe customer-sent images so a text LLM (DeepSeek) can use them. Needs a
+ * VISION model — uses OpenAI gpt-4o-mini if OPENAI_API_KEY is set; otherwise null
+ * (DeepSeek's chat API can't read images). */
+async function describeImages(urls: string[]): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY || !urls.length) return null;
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const r = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text' as const, text: 'ลูกค้าร้านออนไลน์ส่งรูปนี้มาในแชท อธิบายสั้นๆ เป็นภาษาไทยว่าในรูปมีอะไร (สินค้าอะไร/อาการเสีย/สลิปโอนเงิน/หน้าจอ/เอกสาร ฯลฯ) เพื่อช่วยแอดมินตอบ' },
+          ...urls.slice(0, 3).map(u => ({ type: 'image_url' as const, image_url: { url: u } })),
+        ],
+      }],
+      max_tokens: 220,
+    });
+    return r.choices[0].message.content?.trim() || null;
+  } catch (e) { console.warn('[Bot] vision failed:', (e as Error).message); return null; }
+}
 
 export async function draftReply(opts: {
   userMessage: string;
@@ -162,9 +184,19 @@ export async function draftReply(opts: {
   customerName?: string;
   shopId?: string | null;
   buyerUsername?: string | null;   // = conversation to_name; used to look up real orders
+  images?: string[];               // customer-sent image URLs to "read"
 }): Promise<DraftResult> {
-  const { userMessage, brand_id = null, history = [], customerName = '', shopId = null, buyerUsername = null } = opts;
+  const { userMessage, brand_id = null, history = [], customerName = '', shopId = null, buyerUsername = null, images = [] } = opts;
   const sb = createAdminClient();
+
+  // "Read" any images the customer sent (vision model if available).
+  let visionBlock = '';
+  if (images.length) {
+    const desc = await describeImages(images);
+    visionBlock = desc
+      ? `\n\n=== รูปที่ลูกค้าส่งมา (ระบบอ่านให้) ===\n${desc}`
+      : `\n\n(ลูกค้าส่งรูปมา ${images.length} รูป — ระบบยังอ่านรูปไม่ได้ ถ้าคำถามเกี่ยวกับรูป ให้ตอบแบบขอดูรายละเอียด/ให้แอดมินดูรูปประกอบ)`;
+  }
 
   const productish = PRODUCT_HINTS.some(k => userMessage.toLowerCase().includes(k));
   const orderIsh = ORDER_HINTS.test(userMessage);
@@ -242,7 +274,8 @@ export async function draftReply(opts: {
 - ถามสถานะ/จัดส่ง/ของที่สั่ง → ดู "ออเดอร์จริงของลูกค้า" · ถามราคา/สต็อก/รุ่น → ดู "สินค้าในร้าน" · มี "สคริปต์ร้าน" → ยึดตามนั้น (เลือกให้ตรงสถานะออเดอร์)
 - ห้ามแต่งตัวเลข/ราคา/โปร/สถานะที่ไม่มีในข้อมูล
 - ตั้ง needs_human=true เฉพาะเมื่อไม่มีข้อมูลช่วยได้เลย หรือเป็นเรื่องต้องตัดสินใจแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม)
-- ตอบภาษาเดียวกับลูกค้า${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
+- ตอบภาษาเดียวกับลูกค้า
+- ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ${visionBlock}${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
 
 ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่างแบบเป็นธรรมชาติ>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}`;
 
@@ -308,6 +341,7 @@ export async function draftReply(opts: {
     used,
     // Real products to offer/send when the customer is asking about products.
     suggestedProducts: (products || []).slice(0, 3).map((p: any) => ({ item_id: p.item_id, item_name: p.item_name, price: p.price, image_url: p.image_url, in_stock: p.in_stock })),
+    sawImage: images.length > 0,
   };
 }
 

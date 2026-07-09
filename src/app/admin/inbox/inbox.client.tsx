@@ -132,6 +132,8 @@ export function InboxClient({ userId }: { userId: string }) {
   const [aiDraft, setAiDraft] = useState<any | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftCopied, setDraftCopied] = useState(false);
+  const [selQ, setSelQ] = useState<string[]>([]);       // customer msg ids selected to draft an answer for
+  const [pickQ, setPickQ] = useState(false);            // show the multi-question picker
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
   const [panelTab, setPanelTab] = useState<'draft' | 'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('draft');
@@ -277,7 +279,7 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false);
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false);
     // Restore cached panel data instantly (orders/products/vouchers); only fetch
     // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
     // so caching makes every re-open instant.
@@ -335,11 +337,12 @@ export function InboxClient({ userId }: { userId: string }) {
   const messages = active?.messages;
   const lastMsg = messages && messages.length ? messages[messages.length - 1] : null;
   const needsReply = !!lastMsg && (lastMsg as any).sender_type === 'customer'; // last word is the customer's
-  const fetchDraft = useCallback(() => {
+  const fetchDraft = useCallback((ids?: string[]) => {
     const id = activeIdRef.current;
     if (!id) return;
     setDraftLoading(true); setDraftCopied(false);
-    fetch(`/api/conversations/${id}/draft`).then(r => r.json())
+    const qs = ids && ids.length ? `?sel=${ids.join(',')}` : '';
+    fetch(`/api/conversations/${id}/draft${qs}`).then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setAiDraft(d); })
       .catch(() => { if (id === activeIdRef.current) setAiDraft({ text: '', error: true }); })
       .finally(() => { if (id === activeIdRef.current) setDraftLoading(false); });
@@ -355,7 +358,8 @@ export function InboxClient({ userId }: { userId: string }) {
 
   const copyDraft = () => { if (aiDraft?.text) { navigator.clipboard?.writeText(aiDraft.text).catch(() => {}); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 1500); } };
   const useDraft = () => { if (aiDraft?.text) setDraft(aiDraft.text); };  // fill the composer to edit
-  const regenDraft = () => fetchDraft();
+  const regenDraft = () => fetchDraft(selQ.length ? selQ : undefined);
+  const toggleQ = (mid: string) => setSelQ(s => s.includes(mid) ? s.filter(x => x !== mid) : [...s, mid]);
   const sendDraft = async () => {
     if (!active || !aiDraft?.text || sending) return;
     setSending(true);
@@ -1078,11 +1082,33 @@ export function InboxClient({ userId }: { userId: string }) {
                   <span className="flex items-center gap-1.5 text-[10px] text-slate-400 uppercase font-semibold tracking-wider">
                     <Fi name="sparkles" className="text-amber-400 text-sm" /> ช่วยร่างคำตอบ
                   </span>
-                  <button onClick={regenDraft} disabled={draftLoading} className="text-[10px] text-indigo-600 hover:underline disabled:opacity-50 flex items-center gap-1">
-                    <Fi name="refresh" className="text-[11px]" /> ร่างใหม่
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setPickQ(v => !v)} className={cn('text-[10px] hover:underline flex items-center gap-1', pickQ ? 'text-indigo-600' : 'text-slate-500')}>
+                      <Fi name="list-check" className="text-[11px]" /> เลือกหลายคำถาม
+                    </button>
+                    <button onClick={regenDraft} disabled={draftLoading} className="text-[10px] text-indigo-600 hover:underline disabled:opacity-50 flex items-center gap-1">
+                      <Fi name="refresh" className="text-[11px]" /> ร่างใหม่
+                    </button>
+                  </div>
                 </div>
                 <div className="text-[10px] text-slate-400 leading-relaxed">เรียนรู้จากสำนวนที่ทีมเคยตอบจริง · แอดมินตรวจแล้วกดส่งเอง (ไม่ส่งอัตโนมัติ)</div>
+
+                {/* Multi-question picker — default is the latest question; tick more to answer several at once */}
+                {pickQ && (
+                  <div className="rounded-lg border border-slate-200 p-2 space-y-1.5">
+                    <div className="text-[10px] text-slate-400">เลือกคำถามลูกค้าที่จะให้ร่างตอบ (ค่าเริ่มต้น = ล่าสุด)</div>
+                    {[...((active?.messages) || [])].filter((m: any) => m.sender_type === 'customer' && (m.text || '').trim()).slice(-8).reverse().map((m: any) => (
+                      <label key={m.id} className="flex items-start gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={selQ.includes(m.id)} onChange={() => toggleQ(m.id)} className="mt-0.5" />
+                        <span className="text-[11px] text-slate-700 line-clamp-2">{m.text}</span>
+                      </label>
+                    ))}
+                    <button onClick={() => fetchDraft(selQ)} disabled={draftLoading || !selQ.length}
+                      className="w-full mt-1 rounded-md bg-indigo-600 text-white py-1.5 text-[11px] font-medium disabled:opacity-50 flex items-center justify-center gap-1">
+                      <Fi name="sparkles" className="text-[11px]" /> ร่างตอบจากที่เลือก ({selQ.length})
+                    </button>
+                  </div>
+                )}
 
                 {draftLoading ? (
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-3"><Loader2 className="w-3.5 h-3.5 animate-spin" /> กำลังร่างคำตอบ…</div>
