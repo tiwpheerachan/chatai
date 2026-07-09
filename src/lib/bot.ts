@@ -23,6 +23,7 @@ function deriveCondition(orders: BuyerOrder[]): string | null {
   return null;
 }
 const PRODUCT_HINTS = ['ราคา', 'กี่บาท', 'บาท', 'มีของ', 'มีไหม', 'พร้อมส่ง', 'สต็อก', 'สต๊อก', 'stock', 'รุ่น', 'สี', 'ไซส์', 'size', 'โปร', 'ส่วนลด', 'รับประกัน'];
+const ORDER_HINTS = /(ของ|พัสดุ|จัดส่ง|ส่ง|สถานะ|เลขพัสดุ|ถึงไหน|กี่วัน|ถึงยัง|เมื่อไหร่|ออเดอร์|คำสั่งซื้อ|order|track|ยกเลิก|คืนเงิน|คืนสินค้า|เคลม)/i;
 
 const SYSTEM_PROMPT_DEFAULT = `คุณคือ Aria — ผู้ช่วยลูกค้าของร้านค้าออนไลน์ พูดสุภาพ เป็นกันเอง ลงท้ายด้วย "ค่ะ" หรือ "ครับ" ตามที่เหมาะสม
 - ตอบสั้น กระชับ ตรงประเด็น ไม่ใช้คำฟุ่มเฟือย
@@ -40,7 +41,8 @@ export interface BotReply {
   fromRule?: string;
 }
 
-async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<string | null> {
+async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[], opts: { temperature?: number } = {}): Promise<string | null> {
+  const temperature = opts.temperature ?? 0.4;
   // Prefer the explicit LLM_PROVIDER, but if it's unset/mock, auto-pick whichever
   // API key is actually configured — so setting ANY key in the host makes AI work.
   const configured = process.env.LLM_PROVIDER;
@@ -57,7 +59,7 @@ async function callLLM(system: string, messages: { role: 'user' | 'assistant'; c
       const r = await ds.chat.completions.create({
         model: model.startsWith('deepseek') ? model : 'deepseek-chat',
         messages: [{ role: 'system', content: system }, ...messages],
-        temperature: 0.4,
+        temperature,
         max_tokens: 500,
       });
       return r.choices[0].message.content?.trim() || null;
@@ -73,7 +75,7 @@ async function callLLM(system: string, messages: { role: 'user' | 'assistant'; c
       const r = await openai.chat.completions.create({
         model,
         messages: [{ role: 'system', content: system }, ...messages],
-        temperature: 0.4,
+        temperature,
         max_tokens: 400,
       });
       return r.choices[0].message.content?.trim() || null;
@@ -156,12 +158,15 @@ export async function draftReply(opts: {
   const sb = createAdminClient();
 
   const productish = PRODUCT_HINTS.some(k => userMessage.toLowerCase().includes(k));
+  const orderIsh = ORDER_HINTS.test(userMessage);
   const [examples, docs, scenarios, orders, products] = await Promise.all([
     getAdminStyleExamples(sb, brand_id),
     retrieve(userMessage, { brand_id, k: 3 }),
     getPlaybook(sb, brand_id).catch(() => [] as PlaybookScenario[]),
-    // Pull the buyer's REAL orders so the draft can answer status/shipping/"what I bought".
-    (shopId && buyerUsername && buyerUsername !== 'Shopee Buyer'
+    // Pull the buyer's REAL orders — but ONLY for order/shipping questions. buyer-orders
+    // is a ~4.5s upstream call, so skipping it for general/product questions makes those
+    // drafts fast (~1–2s); order questions still get the real data (worth the wait).
+    (orderIsh && shopId && buyerUsername && buyerUsername !== 'Shopee Buyer'
       ? getBuyerOrders(shopId, buyerUsername, { limit: 5 }).catch(() => [] as BuyerOrder[])
       : Promise.resolve([] as BuyerOrder[])),
     // For product questions, search the catalog so the draft can give price/stock.
@@ -213,19 +218,21 @@ export async function draftReply(opts: {
     ? `\n\n=== Knowledge Base (ใช้เป็นข้อเท็จจริงเท่านั้น) ===\n${contextDocs.map((d, i) => `[${i + 1}] ${d.title}\n${d.content}`).join('\n\n')}`
     : '';
 
-  const system = `คุณเป็นผู้ช่วย "ร่าง" คำตอบให้แอดมินร้านค้าออนไลน์ — แอดมิน (คนจริง) จะเป็นผู้ตรวจและกดส่งเอง คุณไม่ได้ตอบแทนและห้ามส่งเอง
-เป้าหมาย: ร่างคำตอบที่ฟังดูเป็นธรรมชาติเหมือนแอดมินคนนี้พิมพ์เอง (ไม่ใช่บอท) โดยเลียนแบบ "สไตล์" จากตัวอย่างจริงด้านล่าง
-กติกา:
-- **พยายามตอบให้ได้ก่อนเสมอ** โดยใช้ข้อมูลจริงที่ให้มาด้านล่าง (ออเดอร์ของลูกค้า, สินค้าในร้าน, สคริปต์ร้าน, Knowledge Base) — อย่ารีบโยนให้พนักงาน
-- ถ้าลูกค้าถามเรื่องสถานะ/การจัดส่ง/ของที่สั่ง ให้ดูจาก "ออเดอร์จริงของลูกค้า" แล้วตอบตรงๆ (เช่น เลขออเดอร์ สถานะ วันที่ สินค้า)
-- ถ้าถามราคา/สต็อก/รุ่น ให้ดูจาก "สินค้าในร้าน"
-- ถ้ามี "สคริปต์ที่ร้านกำหนด" ให้ยึดตามนั้นเป็นหลัก (เลือกอันที่ตรงสถานะออเดอร์)
-- เลียนแบบสำนวน/โทน/คำลงท้าย/อีโมจิ จากตัวอย่างจริงของแอดมิน
+  const system = `คุณคือแอดมินร้านค้าออนไลน์ (คนจริง) กำลังพิมพ์ตอบลูกค้าในแชท — ร่างข้อความให้เพื่อนแอดมินตรวจแล้วกดส่งเอง
+สำคัญที่สุด: ให้ "เหมือนคนพิมพ์จริง" มากที่สุด อย่าให้ดูเหมือนบอท (Shopee แบนบอท)
+วิธีพิมพ์ให้เหมือนคน:
+- เป็นกันเอง เหมือนคุยจริงในมือถือ ไม่ทางการหรือเป๊ะเกินไป ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็นจริงๆ
+- โทน ความยาว คำลงท้าย (ค่ะ/นะคะ/จ้า) และอีโมจิ ให้เหมือนตัวอย่างจริงของแอดมินด้านล่าง
+- พิมพ์สั้นๆ เป็นประโยคธรรมชาติ ไม่ต้องเป็นทางการแบบเอกสาร ไม่ต้องขึ้นต้นด้วยคำทักทายยาวๆ ทุกครั้ง
+- ไม่ต้องสมบูรณ์แบบ 100% — ภาษาพูด/ตัวสะกดไม่เป๊ะเป๊ะได้บ้างตามธรรมชาติ (อย่าจงใจพิมพ์ผิดเยอะ)
+เนื้อหา:
+- พยายามตอบให้ได้เองก่อนเสมอ โดยใช้ข้อมูลจริงด้านล่าง (ออเดอร์ลูกค้า/สินค้า/สคริปต์ร้าน/คลังความรู้) อย่ารีบโยนให้พนักงาน
+- ถามสถานะ/จัดส่ง/ของที่สั่ง → ดู "ออเดอร์จริงของลูกค้า" · ถามราคา/สต็อก/รุ่น → ดู "สินค้าในร้าน" · มี "สคริปต์ร้าน" → ยึดตามนั้น (เลือกให้ตรงสถานะออเดอร์)
 - ห้ามแต่งตัวเลข/ราคา/โปร/สถานะที่ไม่มีในข้อมูล
-- ตั้ง needs_human=true **เฉพาะเมื่อไม่มีข้อมูลใดๆ ช่วยได้จริง** (ไม่มีทั้งออเดอร์ สินค้า สคริปต์ KB) หรือเป็นเรื่องที่ต้องตัดสินใจ/ดำเนินการแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม) — ในกรณีนั้นร่างข้อความสั้นๆ ขอตรวจสอบให้ ในโทนแอดมิน
-- ตอบเป็นภาษาเดียวกับลูกค้า${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
+- ตั้ง needs_human=true เฉพาะเมื่อไม่มีข้อมูลช่วยได้เลย หรือเป็นเรื่องต้องตัดสินใจแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม)
+- ตอบภาษาเดียวกับลูกค้า${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
 
-ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่าง>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ ภาษาไทย>"}`;
+ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่างแบบเป็นธรรมชาติ>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}`;
 
   const chatHistory = history.slice(-6).map(h => ({
     role: (h.sender_type === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
@@ -233,7 +240,7 @@ export async function draftReply(opts: {
   }));
   chatHistory.push({ role: 'user', content: userMessage || '(ลูกค้าส่งรูป/สติกเกอร์/การ์ด)' });
 
-  const raw = await callLLM(system, chatHistory);
+  const raw = await callLLM(system, chatHistory, { temperature: 0.8 });   // higher = more human-like variation
   let reply = '';
   let needsHuman = false;
   let reason = '';
@@ -246,9 +253,7 @@ export async function draftReply(opts: {
   }
   if (!reply) {
     // No LLM configured (mock) or empty → degrade gracefully, still using real data.
-    // Only prefer the order-status line when the question is actually about the
-    // order/shipping; otherwise a knowledge-base answer is more relevant.
-    const orderIsh = /(ของ|พัสดุ|จัดส่ง|ส่ง|สถานะ|เลขพัสดุ|ถึงไหน|กี่วัน|ถึงยัง|order|track)/i.test(userMessage);
+    // Prefer the order-status line only for order/shipping questions; else KB.
     if (replyStrategies.length) { reply = replyStrategies[0].response || ''; needsHuman = false; }   // playbook script verbatim
     else if (orders.length && orderIsh) {
       const o = orders[0];
