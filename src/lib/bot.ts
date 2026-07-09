@@ -20,8 +20,13 @@ export interface BotReply {
 }
 
 async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<string | null> {
-  const provider = process.env.LLM_PROVIDER || 'mock';
-  const model = process.env.LLM_MODEL || 'gpt-4o-mini';
+  // Prefer the explicit LLM_PROVIDER, but if it's unset/mock, auto-pick whichever
+  // API key is actually configured — so setting EITHER key in the host makes AI work.
+  const configured = process.env.LLM_PROVIDER;
+  const provider = configured && configured !== 'mock'
+    ? configured
+    : (process.env.OPENAI_API_KEY ? 'openai' : process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'mock');
+  const model = process.env.LLM_MODEL || (provider === 'anthropic' ? 'claude-3-5-sonnet-latest' : 'gpt-4o-mini');
 
   if (provider === 'openai' && process.env.OPENAI_API_KEY) {
     try {
@@ -49,7 +54,7 @@ async function callLLM(system: string, messages: { role: 'user' | 'assistant'; c
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          model: model.startsWith('claude') ? model : 'claude-sonnet-4-6',
+          model: model.startsWith('claude') ? model : 'claude-3-5-sonnet-latest',
           max_tokens: 400,
           system,
           messages,

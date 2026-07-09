@@ -30,9 +30,11 @@ services:
       - key: CRON_SECRET
         sync: false
       - key: LLM_PROVIDER
-        value: openai
+        value: openai        # openai | anthropic | mock (auto-detects a set key if mock)
       - key: OPENAI_API_KEY
-        sync: false
+        sync: false          # set in Render dashboard → AI draft ("ช่วยตอบ") works
+      - key: ANTHROPIC_API_KEY
+        sync: false          # alternative: set this + LLM_PROVIDER=anthropic for Claude
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
       - key: LINE_CHANNEL_SECRET
