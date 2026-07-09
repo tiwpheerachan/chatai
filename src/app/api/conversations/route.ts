@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { clampInt, safeUuid } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
@@ -15,16 +16,22 @@ export async function GET(req: Request) {
   const assigned = safeUuid(searchParams.get('assigned_to'));
   const sel = '*, customer:customers(display_name,avatar,email,phone,ltv,order_count), brand:brands(name,slug,color), assignee:profiles!conversations_assigned_to_fkey(id,name)';
 
-  // Build the query, applying the shared filters. `withPin` toggles the pinned-first
-  // ordering — if migration 012 (the `pinned` column) hasn't been applied yet, that
-  // order clause errors, so we retry WITHOUT it rather than breaking the whole inbox.
+  // Use the ADMIN (service-role) client and apply the user's brand scope IN CODE.
+  // Why: the conversations RLS policy calls current_user_role()/current_user_brand()
+  // per row, so sorting the (now 100k+ row) table under RLS times out → intermittent
+  // 500s and an empty inbox. The admin client skips RLS (query ~0.3s); we replicate
+  // the exact scoping here: owner/all-brands see everything, otherwise filter to the
+  // user's allowed brand ids. (Reads only; same visibility the RLS granted.)
+  const sb = createAdminClient();
   const build = (withPin: boolean) => {
-    let q = ctx.sb.from('conversations').select(sel);
+    let q = sb.from('conversations').select(sel);
     if (withPin) q = q.order('pinned', { ascending: false });
     q = q.order('last_message_at', { ascending: false }).limit(limit);
     if (status) q = q.eq('status', status);
     if (channel) q = q.eq('channel', channel);
     if (assigned) q = q.eq('assigned_to', assigned);
+    // scope.brands === null → all brands (owner / unrestricted role).
+    if (ctx.scope.brands) q = q.in('brand_id', ctx.scope.brands.length ? ctx.scope.brands : ['00000000-0000-0000-0000-000000000000']);
     return q;
   };
 
