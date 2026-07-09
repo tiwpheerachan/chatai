@@ -138,6 +138,9 @@ export function InboxClient({ userId }: { userId: string }) {
   const listElRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Per-conversation cache for the (slow, upstream) panel data so re-opening a
+  // chat shows orders/products/vouchers instantly instead of re-fetching.
+  const panelCache = useRef<Map<string, { orders?: any; products?: any[]; vouchers?: any }>>(new Map());
 
   const [loadError, setLoadError] = useState(false);
   const failRef = useRef(0);
@@ -271,13 +274,28 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setBuyerOrders(null); setOrdersLoading(true);
-    setProds(null); setProdQ(''); setTasks([]); setRecProds(null); setAssignOpen(false); setPanelProdQ(''); setVouchers(null);
-    fetch(`/api/conversations/${id}/orders`)
-      .then(r => r.json())
-      .then(d => { if (id === activeIdRef.current) setBuyerOrders({ list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched }); })
-      .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
-      .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ('');
+    // Restore cached panel data instantly (orders/products/vouchers); only fetch
+    // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
+    // so caching makes every re-open instant.
+    const cached = panelCache.current.get(id);
+    setBuyerOrders(cached?.orders ?? null);
+    setRecProds(cached?.products ?? null);
+    setVouchers(cached?.vouchers ?? null);
+    if (cached?.orders) {
+      setOrdersLoading(false);
+    } else {
+      setOrdersLoading(true);
+      fetch(`/api/conversations/${id}/orders`)
+        .then(r => r.json())
+        .then(d => {
+          const val = { list: Array.isArray(d?.orders) ? d.orders : [], matched: !!d?.matched };
+          panelCache.current.set(id, { ...panelCache.current.get(id), orders: val });
+          if (id === activeIdRef.current) setBuyerOrders(val);
+        })
+        .catch(() => { if (id === activeIdRef.current) setBuyerOrders({ list: [], matched: false }); })
+        .finally(() => { if (id === activeIdRef.current) setOrdersLoading(false); });
+    }
     loadTasks(id);
     // NOTE: products + vouchers are NOT fetched here — they hit the rate-limited
     // Shopee API and most opens never look at those tabs. They load lazily the
@@ -292,12 +310,20 @@ export function InboxClient({ userId }: { userId: string }) {
     if (!id) return;
     if (panelTab === 'products' && recProds === null) {
       fetch(`/api/conversations/${id}/products`).then(r => r.json())
-        .then(d => { if (id === activeIdRef.current) setRecProds(Array.isArray(d?.products) ? d.products : []); })
+        .then(d => {
+          const list = Array.isArray(d?.products) ? d.products : [];
+          panelCache.current.set(id, { ...panelCache.current.get(id), products: list });
+          if (id === activeIdRef.current) setRecProds(list);
+        })
         .catch(() => { if (id === activeIdRef.current) setRecProds([]); });
     }
     if (panelTab === 'coupon' && vouchers === null) {
       fetch(`/api/conversations/${id}/vouchers`).then(r => r.json())
-        .then(d => { if (id === activeIdRef.current) setVouchers({ list: Array.isArray(d?.vouchers) ? d.vouchers : [], scopeMissing: !!d?.scopeMissing }); })
+        .then(d => {
+          const val = { list: Array.isArray(d?.vouchers) ? d.vouchers : [], scopeMissing: !!d?.scopeMissing };
+          panelCache.current.set(id, { ...panelCache.current.get(id), vouchers: val });
+          if (id === activeIdRef.current) setVouchers(val);
+        })
         .catch(() => { if (id === activeIdRef.current) setVouchers({ list: [], scopeMissing: false }); });
     }
   }, [panelTab, activeId, recProds, vouchers]);
