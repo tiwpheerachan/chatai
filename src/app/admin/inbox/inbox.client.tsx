@@ -1107,8 +1107,8 @@ export function InboxClient({ userId }: { userId: string }) {
                     {aiDraft.text ? (
                       <>
                         <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 text-[13px] text-slate-800 whitespace-pre-wrap leading-relaxed">{aiDraft.text}</div>
-                        {(aiDraft.sources?.length ?? 0) > 0 && (
-                          <div className="text-[10px] text-slate-400">อ้างอิง: {aiDraft.sources.map((s: any) => s.title).join(', ')}</div>
+                        {(aiDraft.used?.length ?? 0) > 0 && (
+                          <div className="text-[10px] text-slate-400 flex items-start gap-1"><Fi name="search" className="text-[10px] mt-0.5 shrink-0" /> ใช้ข้อมูล: {aiDraft.used.join(' · ')}</div>
                         )}
                         <div className="grid grid-cols-3 gap-1.5">
                           <button onClick={copyDraft} className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 hover:bg-slate-50 text-slate-700">

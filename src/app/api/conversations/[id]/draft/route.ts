@@ -23,7 +23,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   if (limited) return limited;
 
   const sb = createAdminClient();
-  const { data: c } = await sb.from('conversations').select('brand_id, channel').eq('id', params.id).maybeSingle();
+  const { data: c } = await sb.from('conversations').select('brand_id, channel, shop_id, customer:customers(display_name)').eq('id', params.id).maybeSingle();
   if (!c) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { data: msgs } = await sb
@@ -42,6 +42,12 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   const lastIdx = list.map(m => m.id).lastIndexOf(lastCust.id);
   const answered = list.slice(lastIdx + 1).some(m => m.sender_type === 'agent');
 
-  const d = await draftReply({ userMessage: lastCust.text || '', brand_id: (c as any).brand_id, history: list as never });
+  const d = await draftReply({
+    userMessage: lastCust.text || '',
+    brand_id: (c as any).brand_id,
+    history: list as never,
+    shopId: (c as any).shop_id,
+    buyerUsername: (c as any).customer?.display_name || null,
+  });
   return NextResponse.json({ ...d, forMessageId: lastCust.id, answered, question: lastCust.text || '' });
 }
