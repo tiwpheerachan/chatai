@@ -129,9 +129,12 @@ export function InboxClient({ userId }: { userId: string }) {
   const [recProds, setRecProds] = useState<any[] | null>(null);
   const [panelProdQ, setPanelProdQ] = useState('');
   const [vouchers, setVouchers] = useState<{ list: any[]; scopeMissing: boolean } | null>(null);
+  const [aiDraft, setAiDraft] = useState<any | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftCopied, setDraftCopied] = useState(false);
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
-  const [panelTab, setPanelTab] = useState<'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('orders');
+  const [panelTab, setPanelTab] = useState<'draft' | 'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('draft');
   const panelWRef = useRef(360);
   const [listW, setListW] = useState(320);
   const listWRef = useRef(320);
@@ -274,7 +277,7 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ('');
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false);
     // Restore cached panel data instantly (orders/products/vouchers); only fetch
     // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
     // so caching makes every re-open instant.
@@ -327,6 +330,43 @@ export function InboxClient({ userId }: { userId: string }) {
         .catch(() => { if (id === activeIdRef.current) setVouchers({ list: [], scopeMissing: false }); });
     }
   }, [panelTab, activeId, recProds, vouchers]);
+
+  // ---- AI draft ("ช่วยตอบ") — learns the team's style; human copies/sends ----
+  const messages = active?.messages;
+  const lastMsg = messages && messages.length ? messages[messages.length - 1] : null;
+  const needsReply = !!lastMsg && (lastMsg as any).sender_type === 'customer'; // last word is the customer's
+  const fetchDraft = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    setDraftLoading(true); setDraftCopied(false);
+    fetch(`/api/conversations/${id}/draft`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setAiDraft(d); })
+      .catch(() => { if (id === activeIdRef.current) setAiDraft({ text: '', error: true }); })
+      .finally(() => { if (id === activeIdRef.current) setDraftLoading(false); });
+  }, []);
+  useEffect(() => {
+    // Auto-draft only when the chat is actually waiting on us (last message is the
+    // customer's) — don't burn LLM calls on chats we've already answered.
+    if (!activeId || panelTab !== 'draft' || !needsReply) return;
+    const lcId = lastMsg ? (lastMsg as any).id : null;
+    if (aiDraft && aiDraft.forMessageId === lcId) return; // already drafted for this exact message
+    fetchDraft();
+  }, [panelTab, activeId, needsReply, lastMsg, aiDraft, fetchDraft]);
+
+  const copyDraft = () => { if (aiDraft?.text) { navigator.clipboard?.writeText(aiDraft.text).catch(() => {}); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 1500); } };
+  const useDraft = () => { if (aiDraft?.text) setDraft(aiDraft.text); };  // fill the composer to edit
+  const regenDraft = () => fetchDraft();
+  const sendDraft = async () => {
+    if (!active || !aiDraft?.text || sending) return;
+    setSending(true);
+    try {
+      const r = await fetch(`/api/conversations/${active.id}/messages`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: aiDraft.text }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งไม่สำเร็จ'); }
+      else { setAiDraft(null); refreshActive(); }
+    } finally { setSending(false); }
+  };
 
   const sendVoucherCard = async (v: any) => {
     if (!active || sending) return;
@@ -1010,6 +1050,7 @@ export function InboxClient({ userId }: { userId: string }) {
           {/* Tab bar */}
           <div className="flex border-b border-slate-200 shrink-0 text-[11px] font-medium overflow-x-auto scroll-thin">
             {([
+              { key: 'draft', label: 'ช่วยตอบ', icon: 'sparkles', badge: 0 },
               { key: 'info', label: 'ข้อมูล', icon: 'user', badge: 0 },
               { key: 'orders', label: 'ออเดอร์', icon: 'shopping-bag', badge: buyerOrders?.list.length || 0 },
               { key: 'products', label: 'สินค้า', icon: 'box-open', badge: 0 },
@@ -1030,6 +1071,64 @@ export function InboxClient({ userId }: { userId: string }) {
 
           {/* Tab content (scrolls) */}
           <div className="flex-1 overflow-y-auto scroll-thin">
+
+            {panelTab === 'draft' && (
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-[10px] text-slate-400 uppercase font-semibold tracking-wider">
+                    <Fi name="sparkles" className="text-amber-400 text-sm" /> ช่วยร่างคำตอบ
+                  </span>
+                  <button onClick={regenDraft} disabled={draftLoading} className="text-[10px] text-indigo-600 hover:underline disabled:opacity-50 flex items-center gap-1">
+                    <Fi name="refresh" className="text-[11px]" /> ร่างใหม่
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400 leading-relaxed">เรียนรู้จากสำนวนที่ทีมเคยตอบจริง · แอดมินตรวจแล้วกดส่งเอง (ไม่ส่งอัตโนมัติ)</div>
+
+                {draftLoading ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-3"><Loader2 className="w-3.5 h-3.5 animate-spin" /> กำลังร่างคำตอบ…</div>
+                ) : !aiDraft || aiDraft.empty ? (
+                  <div className="text-[11px] text-slate-400 py-2">{aiDraft?.empty ? 'ยังไม่มีคำถามจากลูกค้าให้ตอบ' : 'กด “ร่างใหม่” เพื่อให้ช่วยร่างคำตอบ'}</div>
+                ) : (
+                  <div className="space-y-2">
+                    {aiDraft.question && (
+                      <div className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-500">
+                        <span className="text-slate-400">ลูกค้าถาม: </span>{String(aiDraft.question).slice(0, 160)}
+                      </div>
+                    )}
+                    {aiDraft.needsHuman && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-[11px] text-amber-800 flex gap-1.5">
+                        <Fi name="triangle-warning" className="text-sm shrink-0 mt-0.5" />
+                        <div><span className="font-semibold">ควรให้แอดมินตอบเอง</span>{aiDraft.reason ? ` — ${aiDraft.reason}` : ' — ข้อมูลไม่พอ'}</div>
+                      </div>
+                    )}
+                    {aiDraft.answered && (
+                      <div className="text-[10px] text-emerald-600">✓ ตอบข้อความนี้ไปแล้ว (นี่คือร่างเผื่อใช้)</div>
+                    )}
+                    {aiDraft.text ? (
+                      <>
+                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 text-[13px] text-slate-800 whitespace-pre-wrap leading-relaxed">{aiDraft.text}</div>
+                        {(aiDraft.sources?.length ?? 0) > 0 && (
+                          <div className="text-[10px] text-slate-400">อ้างอิง: {aiDraft.sources.map((s: any) => s.title).join(', ')}</div>
+                        )}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button onClick={copyDraft} className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 hover:bg-slate-50 text-slate-700">
+                            <Fi name={draftCopied ? 'check' : 'copy'} className="text-[13px]" />{draftCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                          </button>
+                          <button onClick={useDraft} className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 hover:bg-slate-50 text-slate-700">
+                            <Fi name="edit" className="text-[13px]" /> แก้ก่อนส่ง
+                          </button>
+                          <button onClick={sendDraft} disabled={sending} className="flex items-center justify-center gap-1 rounded-lg bg-indigo-600 text-white py-1.5 disabled:opacity-50">
+                            <Fi name="paper-plane" className="text-[13px]" /> ส่งเลย
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-[11px] text-slate-400">— ไม่มีข้อความร่าง ให้แอดมินตอบเอง —</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {panelTab === 'info' && (<>
               <div className="p-4 space-y-1.5 text-xs border-b border-slate-100">

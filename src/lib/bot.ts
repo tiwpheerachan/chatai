@@ -66,6 +66,109 @@ async function callLLM(system: string, messages: { role: 'user' | 'assistant'; c
   return null;
 }
 
+// ============================================================================
+// DRAFT ASSISTANT — suggests a reply for a HUMAN admin to review/copy/send.
+// Learns the team's OWN reply style from their past replies (few-shot) so drafts
+// sound natural (Shopee bans bot-like replies) — this NEVER sends on its own.
+// ============================================================================
+
+/** Recent real agent replies for this brand, used as style/tone examples. */
+async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, brandId: string | null, max = 12): Promise<string[]> {
+  // Bound the scan to a handful of recent conversations in the brand (indexed),
+  // then read their agent messages — avoids scanning the whole messages table.
+  let convIds: string[] = [];
+  if (brandId) {
+    const { data: convs } = await sb.from('conversations').select('id').eq('brand_id', brandId).order('last_message_at', { ascending: false }).limit(30);
+    convIds = (convs || []).map((c: any) => c.id);
+    if (!convIds.length) return [];
+  }
+  let q = sb.from('messages').select('text').eq('sender_type', 'agent').not('text', 'is', null).order('created_at', { ascending: false }).limit(60);
+  if (convIds.length) q = q.in('conversation_id', convIds);
+  const { data } = await q;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of (data as any[]) || []) {
+    const t = (m.text || '').trim();
+    // Skip empties, one-word acks, and huge blobs; dedupe.
+    if (t.length < 4 || t.length > 400 || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; }
+
+export async function draftReply(opts: {
+  userMessage: string;
+  brand_id?: string | null;
+  history?: Message[];
+  customerName?: string;
+}): Promise<DraftResult> {
+  const { userMessage, brand_id = null, history = [], customerName = '' } = opts;
+  const sb = createAdminClient();
+
+  const [examples, docs] = await Promise.all([
+    getAdminStyleExamples(sb, brand_id),
+    retrieve(userMessage, { brand_id, k: 3 }),
+  ]);
+  const contextDocs = docs.filter(d => d.similarity > 0.15).slice(0, 3);
+  const topSim = docs[0]?.similarity || 0;
+
+  const styleBlock = examples.length
+    ? `\n\n=== ตัวอย่างวิธีที่แอดมินตอบจริง (เลียนแบบโทน สำนวน ความยาว คำลงท้าย และอีโมจิแบบนี้) ===\n${examples.map((e, i) => `${i + 1}. ${e}`).join('\n')}`
+    : '';
+  const kb = contextDocs.length
+    ? `\n\n=== Knowledge Base (ใช้เป็นข้อเท็จจริงเท่านั้น) ===\n${contextDocs.map((d, i) => `[${i + 1}] ${d.title}\n${d.content}`).join('\n\n')}`
+    : '';
+
+  const system = `คุณเป็นผู้ช่วย "ร่าง" คำตอบให้แอดมินร้านค้าออนไลน์ — แอดมิน (คนจริง) จะเป็นผู้ตรวจและกดส่งเอง คุณไม่ได้ตอบแทนและห้ามส่งเอง
+เป้าหมาย: ร่างคำตอบที่ฟังดูเป็นธรรมชาติเหมือนแอดมินคนนี้พิมพ์เอง (ไม่ใช่บอท) โดยเลียนแบบ "สไตล์" จากตัวอย่างจริงด้านล่าง
+กติกา:
+- เลียนแบบสำนวน/โทน/ความยาว/คำลงท้าย/อีโมจิ จากตัวอย่าง แต่เนื้อหาต้องตรงกับคำถามจริงของลูกค้าตอนนี้
+- ใช้ข้อมูลจาก Knowledge Base เป็นข้อเท็จจริงเท่านั้น ห้ามแต่งข้อมูล/ราคา/โปรขึ้นเอง
+- ถ้าคำถามต้องใช้ข้อมูลเฉพาะที่คุณไม่มีจริง (เช็คสต็อกจริง สถานะออเดอร์รายบุคคล โปรที่ไม่มีใน KB ฯลฯ) ให้ตั้ง needs_human=true แล้วร่างเป็นข้อความสั้นๆ ขอเวลาตรวจสอบให้ ในโทนของแอดมิน
+- ตอบเป็นภาษาเดียวกับลูกค้า${styleBlock}${kb}
+
+ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่าง>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ ภาษาไทย>"}`;
+
+  const chatHistory = history.slice(-6).map(h => ({
+    role: (h.sender_type === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+    content: h.text || '',
+  }));
+  chatHistory.push({ role: 'user', content: userMessage || '(ลูกค้าส่งรูป/สติกเกอร์/การ์ด)' });
+
+  const raw = await callLLM(system, chatHistory);
+  let reply = '';
+  let needsHuman = false;
+  let reason = '';
+  if (raw) {
+    try {
+      const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+      if (j && typeof j.reply === 'string') { reply = j.reply.trim(); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+      else reply = raw.trim();
+    } catch { reply = raw.trim(); }
+  }
+  if (!reply) {
+    // No LLM configured (mock) or empty → degrade: offer KB snippet, else hand off.
+    if (contextDocs.length) { reply = contextDocs[0].content.slice(0, 280); needsHuman = false; }
+    else { needsHuman = true; reason = reason || 'ไม่มีข้อมูลพอให้ร่าง — ให้แอดมินตอบเอง'; }
+  }
+  const confidence = needsHuman ? 0.3 : Math.min(0.95, 0.55 + topSim * 0.4);
+  void customerName;
+  return {
+    text: reply,
+    sources: contextDocs.map(d => ({ id: d.id, title: d.title })),
+    confidence,
+    intent: 'draft',
+    handoff: needsHuman,
+    needsHuman,
+    reason,
+    usedExamples: examples.length,
+  };
+}
+
 export async function generateReply(opts: {
   userMessage: string;
   brand_id?: string | null;
