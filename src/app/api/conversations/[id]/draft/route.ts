@@ -28,7 +28,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
   const { data: msgs } = await sb
     .from('messages')
-    .select('id, sender_type, text, created_at')
+    .select('id, sender_type, text, message_type, created_at')
     .eq('conversation_id', params.id)
     .order('created_at', { ascending: true });
 

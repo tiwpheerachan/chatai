@@ -230,9 +230,11 @@ export async function draftReply(opts: {
   const system = `คุณคือแอดมินร้านค้าออนไลน์ (คนจริง) กำลังพิมพ์ตอบลูกค้าในแชท — ร่างข้อความให้เพื่อนแอดมินตรวจแล้วกดส่งเอง
 สำคัญที่สุด: ให้ "เหมือนคนพิมพ์จริง" มากที่สุด อย่าให้ดูเหมือนบอท (Shopee แบนบอท)
 วิธีพิมพ์ให้เหมือนคน:
+- **อ่านบทสนทนาทั้งหมดก่อน** เข้าใจว่าลูกค้ากำลังคุยเรื่องอะไรอยู่ แล้วตอบให้ต่อเนื่องกับบริบท ไม่ใช่ดูแค่ข้อความล่าสุด
 - เป็นกันเอง เหมือนคุยจริงในมือถือ ไม่ทางการหรือเป๊ะเกินไป ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็นจริงๆ
 - โทน ความยาว คำลงท้าย (ค่ะ/นะคะ/จ้า) และอีโมจิ ให้เหมือนตัวอย่างจริงของแอดมินด้านล่าง
-- พิมพ์สั้นๆ เป็นประโยคธรรมชาติ ไม่ต้องเป็นทางการแบบเอกสาร ไม่ต้องขึ้นต้นด้วยคำทักทายยาวๆ ทุกครั้ง
+- ความยาวไม่ตายตัว: บางทีหลายประโยค/หลายบรรทัดสั้นๆ (คั่นด้วยขึ้นบรรทัดใหม่) บางทีบรรทัดเดียว — เอาที่เป็นธรรมชาติตามสถานการณ์ ไม่ต้องยาวหรือหลายบรรทัดทุกครั้ง
+- ใส่คำอุทาน/รับคำแบบธรรมชาติได้ เช่น "ได้เลยค่ะ" "โอเคค่ะ" "จ้า" "สักครู่นะคะ" ตามจังหวะการคุย
 - ไม่ต้องสมบูรณ์แบบ 100% — ภาษาพูด/ตัวสะกดไม่เป๊ะเป๊ะได้บ้างตามธรรมชาติ (อย่าจงใจพิมพ์ผิดเยอะ)
 เนื้อหา:
 - พยายามตอบให้ได้เองก่อนเสมอ โดยใช้ข้อมูลจริงด้านล่าง (ออเดอร์ลูกค้า/สินค้า/สคริปต์ร้าน/คลังความรู้) อย่ารีบโยนให้พนักงาน
@@ -243,11 +245,20 @@ export async function draftReply(opts: {
 
 ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่างแบบเป็นธรรมชาติ>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}`;
 
-  const chatHistory = history.slice(-6).map(h => ({
-    role: (h.sender_type === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
-    content: h.text || '',
-  }));
-  chatHistory.push({ role: 'user', content: userMessage || '(ลูกค้าส่งรูป/สติกเกอร์/การ์ด)' });
+  // Give the model the WHOLE recent conversation (last 14 turns) so it understands
+  // the topic, not just the last line. Non-text messages become short markers.
+  const marker = (t?: string) => ({ image: '[รูปภาพ]', sticker: '[สติกเกอร์]', item: '[การ์ดสินค้า]', order: '[การ์ดออเดอร์]', voucher: '[คูปอง]', video: '[วิดีโอ]' }[t || ''] || '');
+  const chatHistory = history.slice(-14)
+    .map(h => ({
+      role: (h.sender_type === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: (h.text || '').trim() || marker((h as any).message_type),
+    }))
+    .filter(m => m.content);
+  // Ensure the thread ends with the customer's current question.
+  const last = chatHistory[chatHistory.length - 1];
+  if (!last || last.role !== 'user' || last.content !== (userMessage || '').trim()) {
+    chatHistory.push({ role: 'user', content: userMessage || '(ลูกค้าส่งรูป/สติกเกอร์/การ์ด)' });
+  }
 
   const raw = await callLLM(system, chatHistory, { temperature: 0.8 });   // higher = more human-like variation
   let reply = '';
