@@ -42,12 +42,30 @@ export interface BotReply {
 
 async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<string | null> {
   // Prefer the explicit LLM_PROVIDER, but if it's unset/mock, auto-pick whichever
-  // API key is actually configured — so setting EITHER key in the host makes AI work.
+  // API key is actually configured — so setting ANY key in the host makes AI work.
   const configured = process.env.LLM_PROVIDER;
   const provider = configured && configured !== 'mock'
     ? configured
-    : (process.env.OPENAI_API_KEY ? 'openai' : process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'mock');
-  const model = process.env.LLM_MODEL || (provider === 'anthropic' ? 'claude-3-5-sonnet-latest' : 'gpt-4o-mini');
+    : (process.env.DEEPSEEK_API_KEY ? 'deepseek' : process.env.OPENAI_API_KEY ? 'openai' : process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'mock');
+  const model = process.env.LLM_MODEL
+    || (provider === 'anthropic' ? 'claude-3-5-sonnet-latest' : provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
+
+  // DeepSeek is OpenAI-compatible — same SDK, custom baseURL.
+  if (provider === 'deepseek' && process.env.DEEPSEEK_API_KEY) {
+    try {
+      const ds = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com' });
+      const r = await ds.chat.completions.create({
+        model: model.startsWith('deepseek') ? model : 'deepseek-chat',
+        messages: [{ role: 'system', content: system }, ...messages],
+        temperature: 0.4,
+        max_tokens: 500,
+      });
+      return r.choices[0].message.content?.trim() || null;
+    } catch (e) {
+      console.warn('[Bot] DeepSeek call failed:', (e as Error).message);
+      return null;
+    }
+  }
 
   if (provider === 'openai' && process.env.OPENAI_API_KEY) {
     try {

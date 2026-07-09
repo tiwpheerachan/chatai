@@ -55,18 +55,33 @@ export async function retrieve(
     if (!error && data) return data as RetrievedDoc[];
   }
 
-  // Keyword fallback
+  // Keyword fallback — Thai-friendly (no OpenAI embeddings). Thai has no word
+  // spaces, so space-tokenising fails; use character-bigram overlap (Dice) against
+  // the title + content, plus a substring bonus when the whole query appears.
   let q = sb.from('knowledge_base').select('id,title,content,tags');
   if (opts.brand_id) q = q.or(`brand_id.eq.${opts.brand_id},brand_id.is.null`);
   const { data } = await q;
-  const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  const nq = kwNorm(query);
+  const qg = kwBigrams(nq);
   const scored = (data || []).map(d => {
-    const text = (d.title + ' ' + d.content + ' ' + (d.tags || []).join(' ')).toLowerCase();
-    const hits = tokens.reduce((s, t) => s + (text.includes(t) ? 1 : 0), 0);
-    return { ...d, similarity: hits / Math.max(tokens.length, 1) };
+    const title = kwNorm(d.title);
+    const content = kwNorm(d.content).slice(0, 600);
+    let sim = Math.max(kwDice(qg, kwBigrams(title)), kwDice(qg, kwBigrams(content)));
+    if (nq.length >= 4 && (title.includes(nq) || content.includes(nq))) sim = Math.max(sim, 0.6);
+    // reward when significant title words appear in the query (e.g. "อะไหล่")
+    if (title && nq.length >= 4 && (nq.includes(title) || title.includes(nq.slice(0, 8)))) sim = Math.max(sim, 0.5);
+    return { ...d, similarity: sim };
   });
   scored.sort((a, b) => b.similarity - a.similarity);
   return scored.slice(0, k) as RetrievedDoc[];
+}
+
+function kwNorm(s: string): string { return (s || '').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, ''); }
+function kwBigrams(s: string): Set<string> { const g = new Set<string>(); for (let i = 0; i < s.length - 1; i++) g.add(s.slice(i, i + 2)); return g; }
+function kwDice(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0; for (const x of a) if (b.has(x)) inter++;
+  return (2 * inter) / (a.size + b.size);
 }
 
 export async function upsertDocument(opts: {
