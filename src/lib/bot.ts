@@ -118,8 +118,16 @@ async function callLLM(system: string, messages: { role: 'user' | 'assistant'; c
 // sound natural (Shopee bans bot-like replies) — this NEVER sends on its own.
 // ============================================================================
 
+// Per-brand cache (persistent Node process) so repeat drafts don't re-query the
+// team's style examples every time — they change slowly. 5-min TTL.
+const styleCache = new Map<string, { t: number; v: string[] }>();
+const STYLE_TTL = 5 * 60 * 1000;
+
 /** Recent real agent replies for this brand, used as style/tone examples. */
 async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, brandId: string | null, max = 12): Promise<string[]> {
+  const ck = brandId || '_global';
+  const cached = styleCache.get(ck);
+  if (cached && Date.now() - cached.t < STYLE_TTL) return cached.v;
   // Bound the scan to a handful of recent conversations in the brand (indexed),
   // then read their agent messages — avoids scanning the whole messages table.
   let convIds: string[] = [];
@@ -141,6 +149,7 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
     out.push(t);
     if (out.length >= max) break;
   }
+  styleCache.set(ck, { t: Date.now(), v: out });
   return out;
 }
 

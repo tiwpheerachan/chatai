@@ -58,9 +58,9 @@ export async function retrieve(
   // Keyword fallback — Thai-friendly (no OpenAI embeddings). Thai has no word
   // spaces, so space-tokenising fails; use character-bigram overlap (Dice) against
   // the title + content, plus a substring bonus when the whole query appears.
-  let q = sb.from('knowledge_base').select('id,title,content,tags');
-  if (opts.brand_id) q = q.or(`brand_id.eq.${opts.brand_id},brand_id.is.null`);
-  const { data } = await q;
+  // The doc SET per brand is cached in memory (5-min TTL) so we don't re-fetch the
+  // whole KB on every draft — only the (cheap) JS scoring runs per query.
+  const data = await getKbDocs(sb, opts.brand_id || null);
   const nq = kwNorm(query);
   const qg = kwBigrams(nq);
   const scored = (data || []).map(d => {
@@ -76,6 +76,19 @@ export async function retrieve(
   return scored.slice(0, k) as RetrievedDoc[];
 }
 
+const kbCache = new Map<string, { t: number; v: any[] }>();
+const KB_TTL = 5 * 60 * 1000;
+async function getKbDocs(sb: ReturnType<typeof createAdminClient>, brandId: string | null): Promise<any[]> {
+  const ck = brandId || '_global';
+  const cached = kbCache.get(ck);
+  if (cached && Date.now() - cached.t < KB_TTL) return cached.v;
+  let q = sb.from('knowledge_base').select('id,title,content,tags');
+  if (brandId) q = q.or(`brand_id.eq.${brandId},brand_id.is.null`);
+  const { data } = await q;
+  const v = data || [];
+  kbCache.set(ck, { t: Date.now(), v });
+  return v;
+}
 function kwNorm(s: string): string { return (s || '').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, ''); }
 function kwBigrams(s: string): Set<string> { const g = new Set<string>(); for (let i = 0; i < s.length - 1; i++) g.add(s.slice(i, i + 2)); return g; }
 function kwDice(a: Set<string>, b: Set<string>): number {
