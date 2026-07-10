@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth';
 import { safeUuid } from '@/lib/validation';
-import { getBuyerOrders, ChatSourceError } from '@/lib/chat-source/client';
+import { getBuyerOrders, enrichOrderItems, ChatSourceError } from '@/lib/chat-source/client';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 /**
  * The buyer's past orders for THIS shop — agent context in the customer panel.
@@ -39,6 +40,9 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     // made the whole inbox stall. Order text (name/model/qty) is enough here;
     // full product cards with images live in the สินค้า tab on demand.
     const orders = await getBuyerOrders(shopId, username, { limit: 20 });
+    // Best-effort: attach catalog image/SKU/price to each item (the buyer-orders
+    // API returns only name/model/qty). Bounded + failure-tolerant.
+    await enrichOrderItems(shopId, orders).catch(() => {});
     return NextResponse.json({ orders, matched: orders.length > 0, username });
   } catch (e) {
     const err = e as ChatSourceError;

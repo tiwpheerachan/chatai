@@ -134,6 +134,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const [draftCopied, setDraftCopied] = useState(false);
   const [sentBlocks, setSentBlocks] = useState<number[]>([]); // indexes of draft bubbles already sent
   const [copiedBlock, setCopiedBlock] = useState<number | null>(null);
+  const [copiedSn, setCopiedSn] = useState<string | null>(null); // order SN just copied (panel)
   const [selQ, setSelQ] = useState<string[]>([]);       // customer msg ids selected to draft an answer for
   const [pickQ, setPickQ] = useState(false);            // show the multi-question picker
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
@@ -362,6 +363,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
   const copyDraft = () => { const all = draftBlocks.join('\n\n'); if (all) { navigator.clipboard?.writeText(all).catch(() => {}); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 1500); } };
   const copyBlock = (i: number) => { const t = draftBlocks[i]; if (t) { navigator.clipboard?.writeText(t).catch(() => {}); setCopiedBlock(i); setTimeout(() => setCopiedBlock(c => (c === i ? null : c)), 1500); } };
+  const copySn = (sn: string) => { navigator.clipboard?.writeText(sn).catch(() => {}); setCopiedSn(sn); setTimeout(() => setCopiedSn(s => (s === sn ? null : s)), 1500); };
   const useDraft = () => { if (draftBlocks.length) setDraft(draftBlocks.join('\n\n')); };  // fill the composer to edit
   const editBlock = (i: number) => { const t = draftBlocks[i]; if (t) setDraft(t); };
   const regenDraft = () => fetchDraft(selQ.length ? selQ : undefined);
@@ -1010,7 +1012,7 @@ export function InboxClient({ userId }: { userId: string }) {
                   )}
                 </div>
               )}
-              <div className="px-3 pt-3 pb-5 flex items-end gap-2 relative">
+              <div className="px-3 pt-3 pb-8 flex items-end gap-2 relative">
                 <input ref={fileRef} type="file" accept="image/*" className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) sendImageFile(f); }} />
                 <div className="relative">
@@ -1274,37 +1276,73 @@ export function InboxClient({ userId }: { userId: string }) {
                 {ordersLoading ? (
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /> กำลังโหลด…</div>
                 ) : buyerOrders && buyerOrders.list.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {buyerOrders.list.map((o: any) => (
-                      <div key={o.order_sn} className="rounded-lg border border-slate-200 px-2.5 py-2 space-y-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-[10px] text-slate-500 truncate">{o.order_sn}</span>
-                          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
-                        </div>
-                        {(o.items || []).map((it: any, i: number) => (
-                          <div key={i} className="flex gap-2 items-start">
-                            {it.image_url
-                              // eslint-disable-next-line @next/next/no-img-element
-                              ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button>
-                              : <div className="w-9 h-9 rounded bg-slate-100 shrink-0 flex items-center justify-center"><Fi name="box-open" className="text-base text-slate-300" /></div>}
-                            <div className="min-w-0 flex-1 leading-tight">
-                              <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
-                              <div className="text-slate-400">{it.model_name ? `${it.model_name} · ` : ''}× {it.quantity}</div>
-                              {it.item_id && (
-                                <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
-                                  className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
-                                  <Fi name="paper-plane" className="text-[11px]" /> ส่งการ์ดสินค้านี้ให้ลูกค้า
-                                </button>
+                  <div className="space-y-2.5">
+                    {buyerOrders.list.map((o: any) => {
+                      const est = (o.items || []).reduce((s: number, it: any) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0);
+                      const searchUrl = `https://seller.shopee.co.th/portal/sale/order?source=all&searchKey=${encodeURIComponent(o.order_sn)}`;
+                      return (
+                        <div key={o.order_sn} className="rounded-xl border border-slate-200 overflow-hidden">
+                          {/* Status + date header */}
+                          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-slate-50 border-b border-slate-100">
+                            <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold', orderStatusStyle(o.order_status))}>{orderStatusLabel(o.order_status)}</span>
+                            <span className="text-[10px] text-slate-500">{fmtDate(o.order_date)}</span>
+                          </div>
+                          <div className="px-2.5 py-2 space-y-2">
+                            {/* Order number + copy */}
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[11px] text-slate-700 truncate">{o.order_sn}</span>
+                              <button onClick={() => copySn(o.order_sn)} title="คัดลอกเลขคำสั่งซื้อ" className="shrink-0 text-slate-400 hover:text-indigo-600">
+                                <Fi name={copiedSn === o.order_sn ? 'check' : 'copy'} className="text-[11px]" />
+                              </button>
+                            </div>
+                            {/* Items */}
+                            {(o.items || []).map((it: any, i: number) => (
+                              <div key={i} className="flex gap-2 items-start">
+                                {it.image_url
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  ? <button type="button" onClick={() => setLightbox(it.image_url)} className="shrink-0 cursor-zoom-in"><img src={it.image_url} alt="" className="w-11 h-11 rounded-lg object-cover" /></button>
+                                  : <div className="w-11 h-11 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center"><Fi name="box-open" className="text-base text-slate-300" /></div>}
+                                <div className="min-w-0 flex-1 leading-tight space-y-0.5">
+                                  <div className="text-slate-700 line-clamp-2">{it.item_name}</div>
+                                  <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-slate-400">
+                                    {it.model_name && <span className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">{it.model_name}</span>}
+                                    <span>× {it.quantity}</span>
+                                    {it.in_stock === false && <span className="text-rose-500">สินค้าหมด</span>}
+                                  </div>
+                                  {it.item_sku && <div className="text-[10px] text-slate-400">SKU: {it.item_sku}</div>}
+                                  <div className="flex items-center gap-2">
+                                    {it.price != null && (
+                                      <span className="text-[11px] font-semibold text-slate-700">฿{Number(it.price).toLocaleString()}
+                                        {it.original_price > it.price && <span className="ml-1 text-[10px] font-normal text-slate-400 line-through">฿{Number(it.original_price).toLocaleString()}</span>}
+                                      </span>
+                                    )}
+                                    {it.item_id && (
+                                      <button onClick={() => sendItemCard(it.item_id)} disabled={sending}
+                                        className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:underline disabled:opacity-50">
+                                        <Fi name="paper-plane" className="text-[11px]" /> ส่งการ์ด
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            {/* Summary */}
+                            <div className="pt-1 border-t border-slate-100 space-y-1 text-[10px]">
+                              <div className="flex justify-between"><span className="text-slate-400">การชำระเงิน</span><span className="text-slate-600 font-medium">{o.cod ? 'เก็บเงินปลายทาง (COD)' : 'ชำระผ่านช่องทางออนไลน์'}</span></div>
+                              <div className="flex justify-between"><span className="text-slate-400">จำนวนสินค้า</span><span className="text-slate-600 font-medium">{o.total_qty ?? (o.items || []).reduce((s: number, it: any) => s + (Number(it.quantity) || 0), 0)} ชิ้น</span></div>
+                              {est > 0 && (
+                                <div className="flex justify-between"><span className="text-slate-400">ยอดโดยประมาณ*</span><span className="text-slate-700 font-semibold">฿{est.toLocaleString()}</span></div>
                               )}
                             </div>
+                            <a href={searchUrl} target="_blank" rel="noreferrer"
+                              className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 text-[10px] text-slate-600 hover:bg-slate-50 hover:border-indigo-300">
+                              <Fi name="shop" className="text-[11px]" /> เปิดออเดอร์นี้ใน Shopee Seller (เลขพัสดุ/ยอดชำระจริง) ↗
+                            </a>
                           </div>
-                        ))}
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
-                          <span>{o.order_date}{o.cod ? ' · เก็บเงินปลายทาง' : ''}</span>
-                          <a href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">เปิด ↗</a>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+                    <div className="text-[9px] text-slate-400 leading-relaxed px-0.5">*ยอดโดยประมาณคำนวณจากราคาสินค้าปัจจุบันในแคตตาล็อก · เลขพัสดุ ผู้ให้บริการขนส่ง สถานะจัดส่ง และยอดชำระจริง ดูได้ใน Shopee Seller Center (API ไม่เปิดให้ดึงข้อมูลส่วนนี้)</div>
                   </div>
                 ) : (
                   <div className="text-[11px] text-slate-400">

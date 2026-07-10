@@ -252,7 +252,13 @@ export async function markRead(shopId: string, conversationId: string): Promise<
 
 // ---- Context reads (Shopee) — order history + product catalog ----
 
-export interface BuyerOrderItem { item_name: string; model_name?: string; quantity: number; }
+export interface BuyerOrderItem {
+  item_name: string; model_name?: string; quantity: number;
+  // Enriched from the product catalog (product-search) when available — the
+  // buyer-orders API itself returns only name/model/qty.
+  item_id?: number; item_sku?: string; image_url?: string;
+  price?: number; original_price?: number; in_stock?: boolean;
+}
 export interface BuyerOrder {
   order_sn: string;
   order_date: string;
@@ -279,6 +285,42 @@ export async function getBuyerOrders(
     `/api/chat/buyer-orders?${qs({ shop_id: shopId, buyer_username: buyerUsername, limit: opts.limit ?? 20 })}`,
   );
   return Array.isArray(data?.orders) ? data.orders : [];
+}
+
+/**
+ * Best-effort: fill in each order item's catalog fields (image, SKU, price, stock)
+ * by matching its name/model against the product-search catalog. The buyer-orders
+ * API gives only name/model/qty; this makes the order panel as rich as we can.
+ * Bounded to a few catalog lookups so it doesn't hammer the 120/min rate limit,
+ * and any failure is swallowed (the order list still renders).
+ */
+export async function enrichOrderItems(shopId: string, orders: BuyerOrder[], opts: { maxLookups?: number } = {}): Promise<void> {
+  const names = [...new Set(orders.flatMap(o => (o.items || []).map(it => it.item_name)).filter(Boolean))].slice(0, opts.maxLookups ?? 6);
+  if (!names.length) return;
+  const byName = new Map<string, CatalogProduct[]>();
+  await Promise.all(names.map(async (name) => {
+    // Strip "[TAG]" prefixes, use the first few distinctive words as the query.
+    const q = name.replace(/\[[^\]]*\]/g, '').trim().split(/\s+/).slice(0, 4).join(' ');
+    try { byName.set(name, await searchProducts(shopId, { q, limit: 20 })); } catch { /* ignore */ }
+  }));
+  const norm = (s?: string) => (s || '').trim().toLowerCase();
+  for (const o of orders) {
+    for (const it of o.items || []) {
+      const prods = byName.get(it.item_name) || [];
+      if (!prods.length) continue;
+      const m =
+        prods.find(p => it.model_name && norm(p.model_name) === norm(it.model_name)) ||
+        prods.find(p => norm(p.item_name) === norm(it.item_name)) ||
+        prods[0];
+      if (!m) continue;
+      it.item_id = m.item_id;
+      it.item_sku = m.model_sku || m.item_sku;
+      it.image_url = m.image_url;
+      it.price = m.price;
+      it.original_price = m.original_price;
+      it.in_stock = m.in_stock;
+    }
+  }
 }
 
 export interface CatalogProduct {
