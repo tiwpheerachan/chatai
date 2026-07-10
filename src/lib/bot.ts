@@ -153,7 +153,41 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
   return out;
 }
 
-export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; sawImage?: boolean; }
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; sawImage?: boolean; blocks: string[]; }
+
+// Strip AI-tell markdown so drafts read like a human typed them in a chat box:
+// removes bold/italic/code/heading syntax and leading bullet or number markers,
+// but keeps emoji, Thai text and normal punctuation untouched.
+export function stripAiTells(s: string): string {
+  return (s || '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')       // **bold** → bold
+    .replace(/__(.+?)__/g, '$1')           // __bold__ → bold
+    .replace(/(?<!\S)\*(?!\s)(.+?)(?<!\s)\*(?!\S)/g, '$1') // *italic* → italic (not bare bullets)
+    .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')  // `code` → code
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')     // # heading → heading
+    .replace(/^\s*[*\-•]\s+/gm, '')          // "* " / "- " / "• " bullet → plain line
+    .replace(/^\s*\d+[.)]\s+/gm, '')         // "1. " / "1) " numbered → plain line
+    .replace(/\*+/g, '')                      // any stray asterisks left over
+    .replace(/[ \t]+\n/g, '\n')              // trailing spaces
+    .replace(/\n{3,}/g, '\n\n')              // collapse >2 blank lines
+    .trim();
+}
+
+/**
+ * Turn a reply into separate chat bubbles ("ช่องๆ") the way a real admin sends
+ * several short messages. Accepts an explicit array from the model, or splits a
+ * single string on blank lines (falling back to single newlines only if there are
+ * no blank lines). Each block is sanitized; empty blocks are dropped.
+ */
+export function toBlocks(input: string[] | string): string[] {
+  let raw: string[];
+  if (Array.isArray(input)) raw = input;
+  else {
+    const t = (input || '').trim();
+    raw = /\n\s*\n/.test(t) ? t.split(/\n\s*\n+/) : (t ? [t] : []);
+  }
+  return raw.map(b => stripAiTells(String(b))).map(b => b.trim()).filter(Boolean);
+}
 
 /** Describe customer-sent images so a text LLM (DeepSeek) can use them. Needs a
  * VISION model — uses OpenAI gpt-4o-mini if OPENAI_API_KEY is set; otherwise null
@@ -245,7 +279,7 @@ export async function draftReply(opts: {
   // If the matched scenario's best strategy is handoff-only AND we truly have no data → human.
   if (matched && onlyHandoff && !orders.length && !products.length && !contextDocs.length) {
     return {
-      text: '', sources: [], confidence: 0.3, intent: 'playbook-handoff',
+      text: '', blocks: [], sources: [], confidence: 0.3, intent: 'playbook-handoff',
       handoff: true, needsHuman: true,
       reason: `ฉาก “${matched.scenario.title}” ตั้งไว้ให้โอนพนักงาน${best?.label ? ` (${best.label})` : ''}`,
       usedExamples: examples.length,
@@ -266,7 +300,8 @@ export async function draftReply(opts: {
 - สุภาพ เรียบร้อย ดูเป็นมืออาชีพนิดหน่อย แต่ยังอบอุ่นเป็นกันเองเหมือนคนจริง (ไม่แข็งทื่อเป็นบอท ไม่เป๊ะเกินไป) ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็น
 - ถ้าลูกค้าถามหา/สนใจสินค้า หรือกำลังเลือกไม่ถูก ให้แนะนำสินค้าที่ร้านมีจริง (จาก "สินค้าในร้าน" ด้านล่าง) พร้อมเหตุผลสั้นๆ — ระบบจะแนบการ์ดสินค้าให้แอดมินกดส่งได้
 - โทน ความยาว คำลงท้าย (ค่ะ/นะคะ/จ้า) และอีโมจิ ให้เหมือนตัวอย่างจริงของแอดมินด้านล่าง
-- ความยาวไม่ตายตัว: บางทีหลายประโยค/หลายบรรทัดสั้นๆ (คั่นด้วยขึ้นบรรทัดใหม่) บางทีบรรทัดเดียว — เอาที่เป็นธรรมชาติตามสถานการณ์ ไม่ต้องยาวหรือหลายบรรทัดทุกครั้ง
+- ส่งเป็น "ข้อความหลายฟอง" แบบคนจริงพิมพ์ในแชท: แยกแต่ละใจความ/แต่ละประโยคเป็นข้อความสั้นๆ แยกฟองกัน (แต่ละ item ใน messages = 1 ฟอง) เช่น ทักทาย 1 ฟอง, ตอบเนื้อหา 1 ฟอง, หมายเหตุ/ขอบคุณอีก 1 ฟอง — ปกติ 1–3 ฟอง ตามธรรมชาติ ไม่ต้องยัดทุกอย่างในฟองเดียว และไม่ต้องแตกย่อยจนถี่เกินไป
+- ห้ามใช้เครื่องหมาย Markdown เด็ดขาด: ห้ามมี ** (ตัวหนา), *, _, #, \`, หรือ bullet แบบ "- " / "* " — พิมพ์เป็นข้อความธรรมดาเหมือนคนพิมพ์มือ ถ้าจะเน้นให้ใช้อีโมจินำหน้าบรรทัด (เช่น 📍 ✅) แทน
 - ใส่คำอุทาน/รับคำแบบธรรมชาติได้ เช่น "ได้เลยค่ะ" "โอเคค่ะ" "จ้า" "สักครู่นะคะ" ตามจังหวะการคุย
 - ไม่ต้องสมบูรณ์แบบ 100% — ภาษาพูด/ตัวสะกดไม่เป๊ะเป๊ะได้บ้างตามธรรมชาติ (อย่าจงใจพิมพ์ผิดเยอะ)
 เนื้อหา:
@@ -277,7 +312,8 @@ export async function draftReply(opts: {
 - ตอบภาษาเดียวกับลูกค้า
 - ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ${visionBlock}${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
 
-ตอบกลับเป็น JSON อย่างเดียว: {"reply":"<ข้อความร่างแบบเป็นธรรมชาติ>","needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}`;
+ตอบกลับเป็น JSON อย่างเดียว: {"messages":["<ฟองที่ 1>","<ฟองที่ 2>", ...],"needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}
+- "messages" = อาเรย์ของข้อความแยกฟอง (ห้ามใส่ Markdown/** ใดๆ) ถ้าจะตอบฟองเดียวก็ใส่ item เดียว`;
 
   // Give the model the WHOLE recent conversation (last 14 turns) so it understands
   // the topic, not just the last line. Non-text messages become short markers.
@@ -296,14 +332,17 @@ export async function draftReply(opts: {
 
   const raw = await callLLM(system, chatHistory, { temperature: 0.8 });   // higher = more human-like variation
   let reply = '';
+  let blocks: string[] = [];
   let needsHuman = false;
   let reason = '';
   if (raw) {
     try {
       const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-      if (j && typeof j.reply === 'string') { reply = j.reply.trim(); needsHuman = !!j.needs_human; reason = j.reason || ''; }
-      else reply = raw.trim();
-    } catch { reply = raw.trim(); }
+      if (j && Array.isArray(j.messages)) { blocks = toBlocks(j.messages); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+      else if (j && typeof j.reply === 'string') { blocks = toBlocks(j.reply); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+      else blocks = toBlocks(raw);
+    } catch { blocks = toBlocks(raw); }
+    reply = blocks.join('\n\n');
   }
   if (!reply) {
     // No LLM configured (mock) or empty → degrade gracefully, still using real data.
@@ -319,6 +358,8 @@ export async function draftReply(opts: {
       reply = `ออเดอร์ ${o.order_sn} สถานะ: ${ORDER_STATUS_TH[o.order_status] || o.order_status} ค่ะ (สั่งเมื่อ ${o.order_date})`;
       needsHuman = false;
     } else { needsHuman = true; reason = reason || 'ไม่มีข้อมูลพอให้ร่าง — ให้แอดมินตอบเอง'; }
+    blocks = toBlocks(reply);
+    reply = blocks.join('\n\n');
   }
   // More data on hand ⇒ higher confidence; needs-human stays low.
   const dataBoost = (orders.length ? 0.15 : 0) + (products.length ? 0.1 : 0) + (matched ? 0.1 : 0);
@@ -331,6 +372,7 @@ export async function draftReply(opts: {
   if (contextDocs.length) used.push(`คลังความรู้ ${contextDocs.length} หัวข้อ`);
   return {
     text: reply,
+    blocks,
     sources: contextDocs.map(d => ({ id: d.id, title: d.title })),
     confidence,
     intent: 'draft',

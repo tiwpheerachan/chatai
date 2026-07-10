@@ -132,6 +132,8 @@ export function InboxClient({ userId }: { userId: string }) {
   const [aiDraft, setAiDraft] = useState<any | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftCopied, setDraftCopied] = useState(false);
+  const [sentBlocks, setSentBlocks] = useState<number[]>([]); // indexes of draft bubbles already sent
+  const [copiedBlock, setCopiedBlock] = useState<number | null>(null);
   const [selQ, setSelQ] = useState<string[]>([]);       // customer msg ids selected to draft an answer for
   const [pickQ, setPickQ] = useState(false);            // show the multi-question picker
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
@@ -279,7 +281,7 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false);
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false); setSentBlocks([]); setCopiedBlock(null);
     // Restore cached panel data instantly (orders/products/vouchers); only fetch
     // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
     // so caching makes every re-open instant.
@@ -340,7 +342,7 @@ export function InboxClient({ userId }: { userId: string }) {
   const fetchDraft = useCallback((ids?: string[]) => {
     const id = activeIdRef.current;
     if (!id) return;
-    setDraftLoading(true); setDraftCopied(false);
+    setDraftLoading(true); setDraftCopied(false); setSentBlocks([]);
     const qs = ids && ids.length ? `?sel=${ids.join(',')}` : '';
     fetch(`/api/conversations/${id}/draft${qs}`).then(r => r.json())
       .then(d => { if (id === activeIdRef.current) setAiDraft(d); })
@@ -356,20 +358,44 @@ export function InboxClient({ userId }: { userId: string }) {
     fetchDraft();
   }, [panelTab, activeId, needsReply, lastMsg, aiDraft, fetchDraft]);
 
-  const copyDraft = () => { if (aiDraft?.text) { navigator.clipboard?.writeText(aiDraft.text).catch(() => {}); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 1500); } };
-  const useDraft = () => { if (aiDraft?.text) setDraft(aiDraft.text); };  // fill the composer to edit
+  // Draft bubbles ("ช่องๆ"): prefer the split blocks; fall back to the whole text.
+  const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
+  const copyDraft = () => { const all = draftBlocks.join('\n\n'); if (all) { navigator.clipboard?.writeText(all).catch(() => {}); setDraftCopied(true); setTimeout(() => setDraftCopied(false), 1500); } };
+  const copyBlock = (i: number) => { const t = draftBlocks[i]; if (t) { navigator.clipboard?.writeText(t).catch(() => {}); setCopiedBlock(i); setTimeout(() => setCopiedBlock(c => (c === i ? null : c)), 1500); } };
+  const useDraft = () => { if (draftBlocks.length) setDraft(draftBlocks.join('\n\n')); };  // fill the composer to edit
+  const editBlock = (i: number) => { const t = draftBlocks[i]; if (t) setDraft(t); };
   const regenDraft = () => fetchDraft(selQ.length ? selQ : undefined);
   const toggleQ = (mid: string) => setSelQ(s => s.includes(mid) ? s.filter(x => x !== mid) : [...s, mid]);
+
+  const postMessage = async (text: string) => {
+    const r = await fetch(`/api/conversations/${active!.id}/messages`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'ส่งไม่สำเร็จ'); }
+  };
+  // Send ONE bubble (keeps the rest of the draft so the admin can send the others).
+  const sendBlock = async (i: number) => {
+    if (!active || sending || sentBlocks.includes(i)) return;
+    const text = draftBlocks[i];
+    if (!text) return;
+    setSending(true);
+    try { await postMessage(text); setSentBlocks(s => [...s, i]); refreshActive(); }
+    catch (e) { alert((e as Error).message); }
+    finally { setSending(false); }
+  };
+  // Send every bubble in order, as separate messages (like a person typing them out).
   const sendDraft = async () => {
-    if (!active || !aiDraft?.text || sending) return;
+    if (!active || !draftBlocks.length || sending) return;
     setSending(true);
     try {
-      const r = await fetch(`/api/conversations/${active.id}/messages`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: aiDraft.text }),
-      });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'ส่งไม่สำเร็จ'); }
-      else { setAiDraft(null); refreshActive(); }
-    } finally { setSending(false); }
+      for (let i = 0; i < draftBlocks.length; i++) {
+        if (sentBlocks.includes(i)) continue;
+        await postMessage(draftBlocks[i]);
+        setSentBlocks(s => [...s, i]);
+      }
+      setAiDraft(null); setSentBlocks([]); refreshActive();
+    } catch (e) { alert((e as Error).message); }
+    finally { setSending(false); }
   };
 
   const sendVoucherCard = async (v: any) => {
@@ -1130,21 +1156,52 @@ export function InboxClient({ userId }: { userId: string }) {
                     {aiDraft.answered && (
                       <div className="text-[10px] text-emerald-600">✓ ตอบข้อความนี้ไปแล้ว (นี่คือร่างเผื่อใช้)</div>
                     )}
-                    {aiDraft.text ? (
+                    {draftBlocks.length ? (
                       <>
-                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 text-[13px] text-slate-800 whitespace-pre-wrap leading-relaxed">{aiDraft.text}</div>
+                        {draftBlocks.length > 1 && (
+                          <div className="text-[10px] text-slate-400 flex items-center gap-1"><Fi name="apps" className="text-[10px]" /> ร่างเป็น {draftBlocks.length} ฟอง — ส่งทีละฟอง หรือส่งทั้งหมดได้</div>
+                        )}
+                        {/* Each bubble = one message the admin can send/copy/edit on its own */}
+                        <div className="space-y-1.5">
+                          {draftBlocks.map((b: string, i: number) => {
+                            const sent = sentBlocks.includes(i);
+                            return (
+                              <div key={i} className={cn('rounded-xl border px-3 py-2 group', sent ? 'border-emerald-200 bg-emerald-50/50' : 'border-indigo-100 bg-indigo-50/40')}>
+                                <div className="text-[13px] text-slate-800 whitespace-pre-wrap leading-relaxed">{b}</div>
+                                <div className="mt-1.5 flex items-center gap-1.5">
+                                  {sent ? (
+                                    <span className="text-[10px] text-emerald-600 flex items-center gap-1"><Fi name="check" className="text-[11px]" /> ส่งแล้ว</span>
+                                  ) : (
+                                    <>
+                                      <button onClick={() => sendBlock(i)} disabled={sending}
+                                        className="text-[10px] flex items-center gap-1 rounded-md bg-indigo-600 text-white px-2 py-1 disabled:opacity-50">
+                                        <Fi name="paper-plane" className="text-[10px]" /> ส่งฟองนี้
+                                      </button>
+                                      <button onClick={() => copyBlock(i)} className="text-[10px] flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-white">
+                                        <Fi name={copiedBlock === i ? 'check' : 'copy'} className="text-[10px]" />{copiedBlock === i ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                                      </button>
+                                      <button onClick={() => editBlock(i)} className="text-[10px] flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-white">
+                                        <Fi name="edit" className="text-[10px]" /> แก้
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                         {(aiDraft.used?.length ?? 0) > 0 && (
                           <div className="text-[10px] text-slate-400 flex items-start gap-1"><Fi name="search" className="text-[10px] mt-0.5 shrink-0" /> ใช้ข้อมูล: {aiDraft.used.join(' · ')}</div>
                         )}
                         <div className="grid grid-cols-3 gap-1.5">
                           <button onClick={copyDraft} className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 hover:bg-slate-50 text-slate-700">
-                            <Fi name={draftCopied ? 'check' : 'copy'} className="text-[13px]" />{draftCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                            <Fi name={draftCopied ? 'check' : 'copy'} className="text-[13px]" />{draftCopied ? 'คัดลอกแล้ว' : 'คัดลอกทั้งหมด'}
                           </button>
                           <button onClick={useDraft} className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 py-1.5 hover:bg-slate-50 text-slate-700">
                             <Fi name="edit" className="text-[13px]" /> แก้ก่อนส่ง
                           </button>
                           <button onClick={sendDraft} disabled={sending} className="flex items-center justify-center gap-1 rounded-lg bg-indigo-600 text-white py-1.5 disabled:opacity-50">
-                            <Fi name="paper-plane" className="text-[13px]" /> ส่งเลย
+                            <Fi name="paper-plane" className="text-[13px]" /> {draftBlocks.length > 1 ? 'ส่งทั้งหมด' : 'ส่งเลย'}
                           </button>
                         </div>
                       </>
@@ -1275,6 +1332,24 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'products' && (
               <div className="p-4 space-y-2 text-xs">
+                {/* Products the AI picked for the latest question — send the card in one tap */}
+                {(aiDraft?.suggestedProducts?.length ?? 0) > 0 && (
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-2 space-y-1">
+                    <div className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1"><Fi name="sparkles" className="text-[11px]" /> AI แนะนำจากคำถามล่าสุด</div>
+                    {aiDraft.suggestedProducts.map((p: any) => (
+                      <div key={`ai-${p.item_id}`} className="flex items-center gap-2 rounded-lg bg-white border border-slate-200 px-2 py-1.5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {p.image_url ? <button type="button" onClick={() => setLightbox(p.image_url)} className="shrink-0 cursor-zoom-in"><img src={p.image_url} alt="" className="w-9 h-9 rounded object-cover" /></button> : <div className="w-9 h-9 rounded bg-slate-100 shrink-0" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] text-slate-800 line-clamp-2 leading-tight">{p.item_name}</div>
+                          <span className="text-[10px] font-semibold text-indigo-600">฿{Number(p.price).toLocaleString()}</span>
+                        </div>
+                        <button onClick={() => sendItemCard(p.item_id)} disabled={sending} title="ส่งการ์ดสินค้านี้ให้ลูกค้า"
+                          className="shrink-0 p-1.5 rounded-md bg-indigo-600 text-white disabled:opacity-50"><Fi name="paper-plane" className="text-[12px]" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* Search the whole catalog; empty = best-sellers */}
                 <div className="flex items-center gap-1">
                   <div className="relative flex-1">
