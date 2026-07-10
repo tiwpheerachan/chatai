@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { createAdminClient } from './supabase/admin';
 import { retrieve, type RetrievedDoc } from './rag';
 import { getPlaybook, matchScenario, type PlaybookScenario } from './playbook';
-import { getBuyerOrders, searchProducts, type BuyerOrder } from './chat-source/client';
+import { getBuyerOrders, searchProducts, getItemsByIds, type BuyerOrder } from './chat-source/client';
 import type { Message } from '@/types/database';
 
 // Shopee order_status → our playbook condition + a Thai label, so the draft can
@@ -263,22 +263,15 @@ export async function draftReply(opts: {
   shopId?: string | null;
   buyerUsername?: string | null;   // = conversation to_name; used to look up real orders
   images?: string[];               // customer-sent image URLs to "read"
+  referencedItemIds?: number[];    // product cards the buyer sent (item_id only)
 }): Promise<DraftResult> {
-  const { userMessage, brand_id = null, history = [], customerName = '', shopId = null, buyerUsername = null, images = [] } = opts;
+  const { userMessage, brand_id = null, history = [], customerName = '', shopId = null, buyerUsername = null, images = [], referencedItemIds = [] } = opts;
   const sb = createAdminClient();
-
-  // "Read" any images the customer sent (vision model if available).
-  let visionBlock = '';
-  if (images.length) {
-    const desc = await describeImages(images);
-    visionBlock = desc
-      ? `\n\n=== รูปที่ลูกค้าส่งมา (ระบบอ่านให้) ===\n${desc}`
-      : `\n\n(ลูกค้าส่งรูปมา ${images.length} รูป — ระบบยังอ่านรูปไม่ได้ ถ้าคำถามเกี่ยวกับรูป ให้ตอบแบบขอดูรายละเอียด/ให้แอดมินดูรูปประกอบ)`;
-  }
 
   const productish = PRODUCT_HINTS.some(k => userMessage.toLowerCase().includes(k));
   const orderIsh = ORDER_HINTS.test(userMessage);
-  const [examples, docs, scenarios, orders, products] = await Promise.all([
+  // Gather every source concurrently (incl. "reading" the images) so the draft stays fast.
+  const [examples, docs, scenarios, orders, products, referencedProducts, visionDesc] = await Promise.all([
     getAdminStyleExamples(sb, brand_id),
     retrieve(userMessage, { brand_id, k: 3 }),
     getPlaybook(sb, brand_id).catch(() => [] as PlaybookScenario[]),
@@ -290,7 +283,15 @@ export async function draftReply(opts: {
       : Promise.resolve([] as BuyerOrder[])),
     // For product questions, search the catalog so the draft can give price/stock.
     (productish && shopId ? searchProducts(shopId, { q: userMessage.slice(0, 40), limit: 4 }).catch(() => []) : Promise.resolve([])),
+    // Resolve product cards the buyer sent (so "these two models" is grounded).
+    (referencedItemIds.length && shopId ? getItemsByIds(shopId, referencedItemIds).catch(() => []) : Promise.resolve([])),
+    // "Read" any images the customer sent (vision model if available).
+    (images.length ? describeImages(images).catch(() => null) : Promise.resolve(null)),
   ]);
+
+  const visionBlock = !images.length ? '' : visionDesc
+    ? `\n\n=== รูปที่ลูกค้าส่งมา (ระบบอ่านให้) ===\n${visionDesc}`
+    : `\n\n(ลูกค้าส่งรูปมา ${images.length} รูป — ระบบยังอ่านรูปไม่ได้ ถ้าคำถามเกี่ยวกับรูป ให้ตอบแบบขอดูรายละเอียด/ให้แอดมินดูรูปประกอบ)`;
   const contextDocs = docs.filter(d => d.similarity > 0.15).slice(0, 3);
   const topSim = docs[0]?.similarity || 0;
   const derivedCond = deriveCondition(orders);
@@ -301,6 +302,10 @@ export async function draftReply(opts: {
     : '';
   const productsBlock = products.length
     ? `\n\n=== สินค้าในร้าน (ตอบเรื่องราคา/สต็อก/รุ่นได้) ===\n${products.map((p: any) => `• ${p.item_name} — ฿${Number(p.price).toLocaleString()}${p.original_price > p.price ? ` (ปกติ ฿${Number(p.original_price).toLocaleString()})` : ''} · ${p.in_stock ? `มีสต็อก ${p.stock}` : 'สินค้าหมด'}`).join('\n')}`
+    : '';
+  // Products the buyer explicitly sent as cards — usually the exact items "รุ่นนี้/สองรุ่นนี้" refers to.
+  const referencedBlock = referencedProducts.length
+    ? `\n\n=== สินค้าที่ลูกค้าส่งการ์ด/อ้างถึงในแชท (มักคือ "รุ่นนี้/สองรุ่นนี้" ที่ลูกค้าหมายถึง — ตอบให้ตรงรุ่นเหล่านี้) ===\n${referencedProducts.map((p: any) => `• ${p.item_name}${p.model_name ? ` (${p.model_name})` : ''} — ฿${Number(p.price).toLocaleString()} · ${p.in_stock ? `มีสต็อก ${p.stock}` : 'สินค้าหมด'}`).join('\n')}`
     : '';
 
   // ---- Playbook: prefer the strategy whose condition matches the real order status ----
@@ -354,7 +359,8 @@ export async function draftReply(opts: {
 - ห้ามแต่งตัวเลข/ราคา/โปร/สถานะที่ไม่มีในข้อมูล
 - ตั้ง needs_human=true เฉพาะเมื่อไม่มีข้อมูลช่วยได้เลย หรือเป็นเรื่องต้องตัดสินใจแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม)
 - ตอบภาษาเดียวกับลูกค้า
-- ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ${visionBlock}${ordersBlock}${productsBlock}${playbookBlock}${styleBlock}${kb}
+- ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ
+- ถ้าลูกค้าส่งรูป/การ์ดสินค้ามา ให้ยึด "รูปที่ลูกค้าส่งมา" และ "สินค้าที่ลูกค้าส่งการ์ด" ด้านล่างเป็นหลัก อย่าเดารุ่นเอง${visionBlock}${ordersBlock}${productsBlock}${referencedBlock}${playbookBlock}${styleBlock}${kb}
 
 ตอบกลับเป็น JSON อย่างเดียว: {"messages":["<ฟองที่ 1>","<ฟองที่ 2>", ...],"needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}
 - "messages" = อาเรย์ของข้อความแยกฟอง (ห้ามใส่ Markdown/** ใดๆ) ถ้าจะตอบฟองเดียวก็ใส่ item เดียว`;
@@ -410,10 +416,17 @@ export async function draftReply(opts: {
   const confidence = needsHuman ? 0.3 : Math.min(0.96, 0.5 + topSim * 0.35 + dataBoost);
   void customerName;
   const used: string[] = [];
+  if (visionDesc && images.length) used.push(`อ่านรูปที่ลูกค้าส่ง ${images.length} รูป`);
+  if (referencedProducts.length) used.push(`สินค้าที่ลูกค้าส่งการ์ด ${referencedProducts.length} รายการ`);
   if (orders.length) used.push(`ออเดอร์ลูกค้า ${orders.length} รายการ`);
   if (products.length) used.push(`สินค้าในร้าน ${products.length} รายการ`);
   if (matched) used.push(`ฉาก “${matched.scenario.title}”`);
   if (contextDocs.length) used.push(`คลังความรู้ ${contextDocs.length} หัวข้อ`);
+  // Offer both the products the buyer referenced (cards they sent) and catalog matches.
+  const suggest = [...referencedProducts, ...products]
+    .filter((p: any, i: number, a: any[]) => p?.item_id && a.findIndex((x: any) => x.item_id === p.item_id) === i)
+    .slice(0, 4)
+    .map((p: any) => ({ item_id: p.item_id, item_name: p.item_name, price: p.price, image_url: p.image_url, in_stock: p.in_stock }));
   return {
     text: reply,
     blocks,
@@ -425,8 +438,8 @@ export async function draftReply(opts: {
     reason,
     usedExamples: examples.length,
     used,
-    // Real products to offer/send when the customer is asking about products.
-    suggestedProducts: (products || []).slice(0, 3).map((p: any) => ({ item_id: p.item_id, item_name: p.item_name, price: p.price, image_url: p.image_url, in_stock: p.in_stock })),
+    // Real products to offer/send (buyer-referenced first, then catalog matches).
+    suggestedProducts: suggest,
     sawImage: images.length > 0,
   };
 }

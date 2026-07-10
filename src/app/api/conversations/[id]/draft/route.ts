@@ -45,13 +45,28 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     return NextResponse.json({ text: '', empty: true, forMessageId: null, handoff: false, needsHuman: false, confidence: 0 });
   }
 
-  const imageUrls: string[] = [];
   const parts: string[] = [];
   for (const m of targets) {
     if ((m.text || '').trim()) parts.push(m.text.trim());
-    for (const a of (m.attachments || [])) { if ((a?.type === 'image' || a?.type === 'sticker') && a?.url) imageUrls.push(a.url); }
   }
   const userMessage = parts.length > 1 ? parts.map((p, i) => `${i + 1}) ${p}`).join('\n') : (parts[0] || '');
+
+  // Collect images + product-card refs from a RECENT WINDOW of the thread — a buyer
+  // often sends an image (or product card) in one message, then asks about it in the
+  // next. Reading only the picked message missed that context. Target images first
+  // (most relevant), then other recent ones; deduped and capped for the vision call.
+  const recent = list.slice(-14);
+  const collectImgs = (m: any) => ((m.attachments || []) as any[])
+    .filter(a => (a?.type === 'image' || a?.type === 'sticker') && a?.url).map(a => a.url as string);
+  const imageUrls = [...new Set([
+    ...targets.flatMap(collectImgs),
+    ...recent.filter(m => !targets.includes(m)).flatMap(collectImgs),
+  ])].slice(0, 4);
+  // Product cards the buyer sent (message_type 'item' carries only item_id).
+  const referencedItemIds = [...new Set(
+    recent.filter(m => m.sender_type === 'customer')
+      .flatMap(m => ((m.attachments || []) as any[]).filter(a => a?.type === 'item' && a?.item_id).map(a => Number(a.item_id))),
+  )].slice(0, 4);
 
   const forMessageId = targets[targets.length - 1].id;
   const lastIdx = list.map(m => m.id).lastIndexOf(forMessageId);
@@ -63,7 +78,8 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     history: list as never,
     shopId: (c as any).shop_id,
     buyerUsername: (c as any).customer?.display_name || null,
-    images: imageUrls.slice(0, 3),
+    images: imageUrls,
+    referencedItemIds,
   });
   return NextResponse.json({ ...d, forMessageId, answered, question: parts.join(' · ').slice(0, 300), selectedCount: targets.length });
 }

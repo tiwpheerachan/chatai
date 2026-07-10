@@ -367,6 +367,26 @@ export async function searchProducts(
   return Array.isArray(data?.products) ? data.products : [];
 }
 
+/**
+ * Resolve specific catalog item_ids to products (name/price/image) — used when a
+ * buyer sends product cards in chat (which carry only item_id) so the AI draft
+ * knows which products they're asking about. There's no get-by-id endpoint, so we
+ * scan the best-sellers list; best-effort (an item outside the top list won't
+ * resolve). One catalog call. Returns one row per item_id (first variant).
+ */
+export async function getItemsByIds(shopId: string, itemIds: (number | string)[]): Promise<CatalogProduct[]> {
+  const want = new Set(itemIds.map(Number).filter(Boolean));
+  if (!want.size) return [];
+  const all = await searchProducts(shopId, { q: '', limit: 100 }).catch(() => [] as CatalogProduct[]);
+  const seen = new Set<number>();
+  const out: CatalogProduct[] = [];
+  for (const p of all) {
+    const id = Number(p.item_id);
+    if (want.has(id) && !seen.has(id)) { seen.add(id); out.push(p); }
+  }
+  return out;
+}
+
 // ---- Vouchers (Shopee) — needs the separate `shopee_voucher` scope ----
 // NOTE: our current key does NOT have this scope yet (list/create → 403
 // "API key missing 'shopee_voucher' scope"). Sending an existing voucher into
