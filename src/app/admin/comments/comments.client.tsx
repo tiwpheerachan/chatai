@@ -29,7 +29,7 @@ const SENT_META: Record<string, { label: string; cls: string }> = {
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 
-export function CommentsClient({ configured, canSend, replyLive }: { configured: boolean; canSend: boolean; replyLive: boolean }) {
+export function CommentsClient({ configured, canSend, replyLive, brands }: { configured: boolean; canSend: boolean; replyLive: boolean; brands: { slug: string; name: string }[] }) {
   const [rows, setRows] = useState<Comment[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -46,6 +46,8 @@ export function CommentsClient({ configured, canSend, replyLive }: { configured:
   const [sort, setSort] = useState('priority');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [brand, setBrand] = useState('');
+  const [platform, setPlatform] = useState('');
   const reqId = useRef(0);
   const seen = useRef<Set<string>>(new Set());
 
@@ -56,10 +58,11 @@ export function CommentsClient({ configured, canSend, replyLive }: { configured:
     if (status) sp.set('status', status);
     if (replied) sp.set('replied', replied);
     if (urgent) sp.set('urgent', '1');
+    if (brand) sp.set('brand', brand);
     if (from) sp.set('from', `${from}T00:00:00`);
     if (to) sp.set('to', `${to}T23:59:59`);
     return sp;
-  }, [sort, q, sentiment, status, replied, urgent, from, to]);
+  }, [sort, q, sentiment, status, replied, urgent, brand, from, to]);
 
   const load = useCallback(async (pg: number, replace: boolean) => {
     if (!configured) return;
@@ -148,6 +151,13 @@ export function CommentsClient({ configured, canSend, replyLive }: { configured:
             <option value="rating_asc">ดาว: น้อย → มาก</option>
             <option value="rating_desc">ดาว: มาก → น้อย</option>
             <option value="severity_desc">ความรุนแรงมากก่อน</option>
+          </select>
+          <select className={sel} value={platform} onChange={e => setPlatform(e.target.value)} title="แพลตฟอร์ม (รีวิวคอมเมนต์รองรับ Shopee)">
+            <option value="">ทุกแพลตฟอร์ม</option><option value="shopee">Shopee</option>
+          </select>
+          <select className={sel} value={brand} onChange={e => setBrand(e.target.value)} title="แบรนด์">
+            <option value="">ทุกแบรนด์</option>
+            {brands.map(b => <option key={b.slug} value={b.slug}>{b.name}</option>)}
           </select>
           <select className={sel} value={sentiment} onChange={e => setSentiment(e.target.value)}>
             <option value="">ทุกโทน</option><option value="negative">เชิงลบ</option><option value="neutral">กลาง</option><option value="positive">เชิงบวก</option>
