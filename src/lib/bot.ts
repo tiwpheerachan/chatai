@@ -286,12 +286,18 @@ export async function draftReply(opts: {
   const { userMessage, brand_id = null, history = [], customerName = '', shopId = null, buyerUsername = null, images = [], referencedItemIds = [] } = opts;
   const sb = createAdminClient();
 
-  const productish = PRODUCT_HINTS.some(k => userMessage.toLowerCase().includes(k));
-  const orderIsh = ORDER_HINTS.test(userMessage);
+  // Topic query = the last few CUSTOMER turns + the current message. A short
+  // follow-up ("กดตอนซื้อแล้วค่ะ") has no keywords, so keying retrieval/intent off
+  // it alone loses the real ask ("ขอใบกำกับภาษี") set earlier in the thread.
+  const recentCustomer = history.filter(m => m.sender_type === 'customer' && (m.text || '').trim()).slice(-5).map(m => (m.text as string).trim());
+  const topicText = [...recentCustomer, userMessage].filter(Boolean).join(' ').slice(0, 400);
+
+  const productish = PRODUCT_HINTS.some(k => topicText.toLowerCase().includes(k));
+  const orderIsh = ORDER_HINTS.test(topicText);
   // Gather every source concurrently (incl. "reading" the images) so the draft stays fast.
   const [examples, docs, scenarios, orders, products, referencedProducts, visionDesc] = await Promise.all([
     getAdminStyleExamples(sb, brand_id),
-    retrieve(userMessage, { brand_id, k: 3 }),
+    retrieve(topicText, { brand_id, k: 3 }),
     getPlaybook(sb, brand_id).catch(() => [] as PlaybookScenario[]),
     // Pull the buyer's REAL orders — but ONLY for order/shipping questions. buyer-orders
     // is a ~4.5s upstream call, so skipping it for general/product questions makes those
@@ -300,7 +306,7 @@ export async function draftReply(opts: {
       ? getBuyerOrders(shopId, buyerUsername, { limit: 5 }).catch(() => [] as BuyerOrder[])
       : Promise.resolve([] as BuyerOrder[])),
     // For product questions, search the catalog so the draft can give price/stock.
-    (productish && shopId ? searchProducts(shopId, { q: userMessage.slice(0, 40), limit: 4 }).catch(() => []) : Promise.resolve([])),
+    (productish && shopId ? searchProducts(shopId, { q: topicText.slice(0, 40), limit: 4 }).catch(() => []) : Promise.resolve([])),
     // Resolve product cards the buyer sent (so "these two models" is grounded).
     (referencedItemIds.length && shopId ? getItemsByIds(shopId, referencedItemIds).catch(() => []) : Promise.resolve([])),
     // "Read" any images the customer sent (vision model if available).
@@ -327,7 +333,7 @@ export async function draftReply(opts: {
     : '';
 
   // ---- Playbook: prefer the strategy whose condition matches the real order status ----
-  const matched = matchScenario(userMessage, scenarios);
+  const matched = matchScenario(topicText, scenarios);
   const allStrategies = (matched?.scenario.strategies || []).filter(s => s.enabled);
   // Rank strategies: exact condition-match first, then unconditional.
   const strategies = [...allStrategies].sort((a, b) => {
@@ -363,7 +369,8 @@ export async function draftReply(opts: {
   const system = `คุณคือแอดมินร้านค้าออนไลน์ (คนจริง) กำลังพิมพ์ตอบลูกค้าในแชท — ร่างข้อความให้เพื่อนแอดมินตรวจแล้วกดส่งเอง
 สำคัญที่สุด: ให้ "เหมือนคนพิมพ์จริง" มากที่สุด อย่าให้ดูเหมือนบอท (Shopee แบนบอท)
 วิธีพิมพ์ให้เหมือนคน:
-- **อ่านบทสนทนาทั้งหมดก่อน** เข้าใจว่าลูกค้ากำลังคุยเรื่องอะไรอยู่ แล้วตอบให้ต่อเนื่องกับบริบท ไม่ใช่ดูแค่ข้อความล่าสุด
+- **อ่านบทสนทนาทั้งหมดก่อนเสมอ** ข้อความล่าสุดมักเป็นการ "ตอบต่อ/ถามต่อ" จากเรื่องที่คุยไว้ก่อนหน้า (เช่น ลูกค้าเคยขอ "ใบกำกับภาษี" ไว้ แล้วพิมพ์ตามว่า "กดตอนซื้อแล้วค่ะ ยังไม่เห็นส่งมา") ต้องเข้าใจว่าประเด็นหลักที่ลูกค้าต้องการคืออะไร (โยงกับข้อความก่อนหน้า) แล้วตอบให้ตรงเรื่องนั้น ห้ามตอบลอยๆ แค่จากข้อความสุดท้าย
+- ดูด้วยว่า "แอดมินเคยบอกอะไรลูกค้าไปแล้ว" ในแชทนี้ แล้วตอบต่อยอด อย่าถามซ้ำหรือขัดกับที่เคยบอก
 - สุภาพ เรียบร้อย ดูเป็นมืออาชีพนิดหน่อย แต่ยังอบอุ่นเป็นกันเองเหมือนคนจริง (ไม่แข็งทื่อเป็นบอท ไม่เป๊ะเกินไป) ไม่ต้องจัดเป็นข้อๆ/บุลเล็ต เว้นแต่จำเป็น
 - ถ้าลูกค้าถามหา/สนใจสินค้า หรือกำลังเลือกไม่ถูก ให้แนะนำสินค้าที่ร้านมีจริง (จาก "สินค้าในร้าน" ด้านล่าง) พร้อมเหตุผลสั้นๆ — ระบบจะแนบการ์ดสินค้าให้แอดมินกดส่งได้
 - โทน ความยาว คำลงท้าย (ค่ะ/นะคะ/จ้า) และอีโมจิ ให้เหมือนตัวอย่างจริงของแอดมินด้านล่าง
@@ -386,7 +393,7 @@ export async function draftReply(opts: {
   // Give the model the WHOLE recent conversation (last 14 turns) so it understands
   // the topic, not just the last line. Non-text messages become short markers.
   const marker = (t?: string) => ({ image: '[รูปภาพ]', sticker: '[สติกเกอร์]', item: '[การ์ดสินค้า]', order: '[การ์ดออเดอร์]', voucher: '[คูปอง]', video: '[วิดีโอ]' }[t || ''] || '');
-  const chatHistory = history.slice(-14)
+  const chatHistory = history.slice(-24)
     .map(h => ({
       role: (h.sender_type === 'customer' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: (h.text || '').trim() || marker((h as any).message_type),
