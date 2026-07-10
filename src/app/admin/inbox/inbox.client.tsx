@@ -1055,9 +1055,9 @@ export function InboxClient({ userId }: { userId: string }) {
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-                  rows={1}
+                  rows={2}
                   placeholder={noteMode ? 'เขียนโน้ตภายใน (ไม่ส่งถึงลูกค้า)...' : 'พิมพ์ข้อความ... (Shift+Enter = บรรทัดใหม่)'}
-                  className={cn('flex-1 resize-none border rounded-lg px-3 py-2 text-sm focus:ring-2',
+                  className={cn('flex-1 resize-y border rounded-lg px-3 py-2 text-sm focus:ring-2 min-h-[72px] max-h-60 overflow-y-auto leading-relaxed',
                     noteMode ? 'border-amber-300 bg-amber-50 focus:ring-amber-300' : 'border-slate-200 focus:ring-indigo-400')}
                 />
                 <button onClick={send} disabled={sending}
