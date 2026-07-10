@@ -139,7 +139,9 @@ export function InboxClient({ userId }: { userId: string }) {
   const [pickQ, setPickQ] = useState(false);            // show the multi-question picker
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
-  const [panelTab, setPanelTab] = useState<'draft' | 'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('draft');
+  const [panelTab, setPanelTab] = useState<'draft' | 'insight' | 'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('draft');
+  const [insight, setInsight] = useState<any | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
   const panelWRef = useRef(360);
   const [listW, setListW] = useState(320);
   const listWRef = useRef(320);
@@ -282,7 +284,7 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false); setSentBlocks([]); setCopiedBlock(null);
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false); setSentBlocks([]); setCopiedBlock(null); setInsight(null);
     // Restore cached panel data instantly (orders/products/vouchers); only fetch
     // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
     // so caching makes every re-open instant.
@@ -358,6 +360,21 @@ export function InboxClient({ userId }: { userId: string }) {
     if (aiDraft && aiDraft.forMessageId === lcId) return; // already drafted for this exact message
     fetchDraft();
   }, [panelTab, activeId, needsReply, lastMsg, aiDraft, fetchDraft]);
+
+  // AI behaviour analysis ("วิเคราะห์") — fetched when the tab opens; cached server-side per message.
+  const fetchInsight = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    setInsightLoading(true);
+    fetch(`/api/conversations/${id}/insight`).then(r => r.json())
+      .then(d => { if (id === activeIdRef.current) setInsight(d); })
+      .catch(() => { if (id === activeIdRef.current) setInsight(null); })
+      .finally(() => { if (id === activeIdRef.current) setInsightLoading(false); });
+  }, []);
+  useEffect(() => {
+    if (!activeId || panelTab !== 'insight' || insight) return;
+    fetchInsight();
+  }, [panelTab, activeId, insight, fetchInsight]);
 
   // Draft bubbles ("ช่องๆ"): prefer the split blocks; fall back to the whole text.
   const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
@@ -1083,6 +1100,7 @@ export function InboxClient({ userId }: { userId: string }) {
           <div className="flex border-b border-slate-200 shrink-0 text-[11px] font-medium overflow-x-auto scroll-thin">
             {([
               { key: 'draft', label: 'ช่วยตอบ', icon: 'sparkles', badge: 0 },
+              { key: 'insight', label: 'วิเคราะห์', icon: 'brain', badge: 0 },
               { key: 'info', label: 'ข้อมูล', icon: 'user', badge: 0 },
               { key: 'orders', label: 'ออเดอร์', icon: 'shopping-bag', badge: buyerOrders?.list.length || 0 },
               { key: 'products', label: 'สินค้า', icon: 'box-open', badge: 0 },
@@ -1227,6 +1245,62 @@ export function InboxClient({ userId }: { userId: string }) {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {panelTab === 'insight' && (
+              <div className="p-4 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">AI วิเคราะห์พฤติกรรมแชท</span>
+                  <button onClick={fetchInsight} disabled={insightLoading} className="text-[10px] text-indigo-600 hover:underline disabled:opacity-50 flex items-center gap-1">
+                    <Fi name="refresh" className={cn('text-[11px]', insightLoading && 'animate-spin')} /> วิเคราะห์ใหม่
+                  </button>
+                </div>
+                {insightLoading && !insight ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-3"><Loader2 className="w-3.5 h-3.5 animate-spin" /> กำลังวิเคราะห์…</div>
+                ) : !insight ? (
+                  <div className="text-[11px] text-slate-400 py-2">กด “วิเคราะห์ใหม่” เพื่อให้ AI สรุปพฤติกรรมลูกค้า</div>
+                ) : (() => {
+                  const MOOD: Record<string, { t: string; c: string }> = { angry: { t: 'โกรธ/ไม่พอใจ', c: 'bg-rose-100 text-rose-700' }, frustrated: { t: 'หงุดหงิด/เร่ง', c: 'bg-orange-100 text-orange-700' }, neutral: { t: 'ปกติ', c: 'bg-slate-100 text-slate-600' }, happy: { t: 'พอใจ', c: 'bg-emerald-100 text-emerald-700' }, interested: { t: 'สนใจซื้อ', c: 'bg-indigo-100 text-indigo-700' } };
+                  const URG: Record<string, { t: string; c: string }> = { high: { t: 'ด่วนมาก', c: 'bg-rose-600 text-white' }, medium: { t: 'ควรรีบ', c: 'bg-amber-100 text-amber-700' }, low: { t: 'ปกติ', c: 'bg-slate-100 text-slate-500' } };
+                  const STAGE: Record<string, string> = { browsing: 'กำลังดูข้อมูล', comparing: 'เปรียบเทียบ/ตัดสินใจ', ready: 'พร้อมซื้อ', existing: 'ลูกค้าเก่า', support: 'ขอความช่วยเหลือ' };
+                  const bi = Number(insight.buying_intent) || 0;
+                  const mood = MOOD[insight.mood] || MOOD.neutral;
+                  const urg = URG[insight.urgency] || URG.low;
+                  return (
+                    <>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={cn('px-2 py-0.5 rounded-full font-semibold', urg.c)}>ความเร่งด่วน: {urg.t}</span>
+                        <span className={cn('px-2 py-0.5 rounded-full font-medium', mood.c)}>อารมณ์: {mood.t}</span>
+                      </div>
+                      {/* buying intent */}
+                      <div className="rounded-xl border border-slate-100 p-2.5">
+                        <div className="flex items-center justify-between mb-1"><span className="text-slate-500">โอกาสปิดการขาย</span><span className="font-bold text-indigo-600">{bi}%</span></div>
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-fuchsia-500" style={{ width: `${bi}%` }} /></div>
+                        <div className="text-[10px] text-slate-400 mt-1.5">ระยะลูกค้า: <span className="text-slate-600 font-medium">{STAGE[insight.stage] || '—'}</span></div>
+                      </div>
+                      {insight.pain_point && (
+                        <div className="rounded-xl bg-amber-50 border border-amber-100 p-2.5">
+                          <div className="text-[10px] text-amber-700 font-semibold flex items-center gap-1 mb-0.5"><Fi name="bookmark" className="text-[11px]" /> สรุปประเด็นลูกค้า</div>
+                          <div className="text-[12px] text-slate-700 leading-snug">{insight.pain_point}</div>
+                        </div>
+                      )}
+                      {insight.handling_tip && (
+                        <div className="rounded-xl bg-indigo-50/60 border border-indigo-100 p-2.5">
+                          <div className="text-[10px] text-indigo-700 font-semibold flex items-center gap-1 mb-0.5"><Fi name="bulb" className="text-[11px]" /> แนะนำวิธีรับมือ</div>
+                          <div className="text-[12px] text-slate-700 leading-snug">{insight.handling_tip}</div>
+                        </div>
+                      )}
+                      {(insight.topics?.length ?? 0) > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-slate-400">หัวข้อ:</span>
+                          {insight.topics.map((t: string, i: number) => <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{t}</span>)}
+                        </div>
+                      )}
+                      <div className="text-[9px] text-slate-300">วิเคราะห์โดย AI · เป็นข้อมูลช่วยตัดสินใจ ไม่ใช่คำตอบสำเร็จ</div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
