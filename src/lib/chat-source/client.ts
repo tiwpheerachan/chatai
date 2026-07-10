@@ -377,7 +377,7 @@ export async function searchProducts(
 export async function getItemsByIds(shopId: string, itemIds: (number | string)[]): Promise<CatalogProduct[]> {
   const want = new Set(itemIds.map(Number).filter(Boolean));
   if (!want.size) return [];
-  const all = await searchProducts(shopId, { q: '', limit: 100 }).catch(() => [] as CatalogProduct[]);
+  const all = await searchProducts(shopId, { q: '', limit: 200 }).catch(() => [] as CatalogProduct[]);
   const seen = new Set<number>();
   const out: CatalogProduct[] = [];
   for (const p of all) {
