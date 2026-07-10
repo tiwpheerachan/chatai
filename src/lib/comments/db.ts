@@ -47,7 +47,8 @@ export interface CommentFilters {
   brand?: string; brandsIn?: string[]; product?: string;
   sentiment?: string; category?: string; status?: string;
   urgentOnly?: boolean; replied?: 'yes' | 'no'; q?: string;
-  sort?: 'created_desc' | 'created_asc' | 'severity_desc' | 'rating_asc';
+  from?: string; to?: string;   // created_at range (ISO)
+  sort?: 'priority' | 'created_desc' | 'created_asc' | 'severity_desc' | 'rating_asc' | 'rating_desc';
   page?: number; pageSize?: number;
 }
 
@@ -81,11 +82,18 @@ export async function listComments(f: CommentFilters): Promise<{ rows: CommentRo
   if (f.urgentOnly) q = q.eq('urgent', true);
   if (f.replied === 'yes') q = q.not('seller_reply', 'is', null);
   if (f.replied === 'no') q = q.is('seller_reply', null);
+  if (f.from) q = q.gte('created_at', f.from);
+  if (f.to) q = q.lte('created_at', f.to);
   if (f.q) q = q.ilike('comment_text', `%${f.q}%`);
   switch (f.sort) {
+    case 'priority':
+      // Urgent + most-severe + newest first — floats "must handle now" to the top.
+      q = q.order('urgent', { ascending: false, nullsFirst: false }).order('severity', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false });
+      break;
     case 'created_asc': q = q.order('created_at', { ascending: true }); break;
-    case 'severity_desc': q = q.order('severity', { ascending: false }).order('created_at', { ascending: false }); break;
+    case 'severity_desc': q = q.order('severity', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }); break;
     case 'rating_asc': q = q.order('rating', { ascending: true, nullsFirst: false }); break;
+    case 'rating_desc': q = q.order('rating', { ascending: false, nullsFirst: false }); break;
     default: q = q.order('created_at', { ascending: false });
   }
   q = q.range(from, from + pageSize - 1);

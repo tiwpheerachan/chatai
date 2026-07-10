@@ -31,6 +31,8 @@ export async function GET(req: Request) {
     urgentOnly: sp.get('urgent') === '1' || sp.get('urgent') === 'true',
     replied: sp.get('replied') === 'yes' ? 'yes' : sp.get('replied') === 'no' ? 'no' : undefined,
     q: sp.get('q') || undefined,
+    from: sp.get('from') || undefined,
+    to: sp.get('to') || undefined,
     sort: (sp.get('sort') as CommentFilters['sort']) || undefined,
     page: num('page'),
     pageSize: num('pageSize'),
