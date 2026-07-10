@@ -44,6 +44,17 @@ services:
         sync: false          # ← paste the Gemini API key in the Render dashboard (not committed)
       - key: GEMINI_MODEL
         value: gemini-2.0-flash
+      # ---- Comment-reply feature (Shopee review comments) ----
+      # Reads comments from the shopee-comment-ai Supabase project:
+      - key: COMMENTS_SUPABASE_URL
+        sync: false
+      - key: COMMENTS_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Posts replies via the Shopee Product API proxy (shopee_reply_comment scope):
+      - key: SHOPEE_REPLY_API_URL
+        value: https://datacenter.shd-technology.co.th/api/v1/shopee/reply-comment
+      - key: SHOPEE_REPLY_API_KEY
+        sync: false
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
       - key: LINE_CHANNEL_SECRET

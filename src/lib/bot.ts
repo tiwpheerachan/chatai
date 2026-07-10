@@ -41,7 +41,7 @@ export interface BotReply {
   fromRule?: string;
 }
 
-async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[], opts: { temperature?: number } = {}): Promise<string | null> {
+export async function callLLM(system: string, messages: { role: 'user' | 'assistant'; content: string }[], opts: { temperature?: number } = {}): Promise<string | null> {
   const temperature = opts.temperature ?? 0.4;
   // Prefer the explicit LLM_PROVIDER, but if it's unset/mock, auto-pick whichever
   // API key is actually configured — so setting ANY key in the host makes AI work.

@@ -22,6 +22,7 @@ const NAV: NavGroup[] = [
       { href: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
       { href: '/admin/inbox', label: 'Unified Inbox', icon: 'comment-dots', perm: 'chat.read' },
       { href: '/admin/chat-import', label: 'ดึงแชท TikTok', icon: 'cloud-download', perm: 'chat.read' },
+      { href: '/admin/comments', label: 'คอมเมนต์รีวิว', icon: 'comment-alt', perm: 'chat.read' },
       { href: '/admin/customers', label: 'ลูกค้า', icon: 'users', perm: 'chat.read' },
     ],
   },
