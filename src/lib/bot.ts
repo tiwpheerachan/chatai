@@ -189,11 +189,55 @@ export function toBlocks(input: string[] | string): string[] {
   return raw.map(b => stripAiTells(String(b))).map(b => b.trim()).filter(Boolean);
 }
 
-/** Describe customer-sent images so a text LLM (DeepSeek) can use them. Needs a
- * VISION model — uses OpenAI gpt-4o-mini if OPENAI_API_KEY is set; otherwise null
- * (DeepSeek's chat API can't read images). */
+const VISION_PROMPT = 'ลูกค้าร้านออนไลน์ส่งรูปนี้มาในแชท อธิบายสั้นๆ เป็นภาษาไทยว่าในรูปมีอะไร (สินค้าอะไร/อาการเสีย/สลิปโอนเงิน/หน้าจอ/เอกสาร ฯลฯ) เพื่อช่วยแอดมินตอบ';
+
+/** Download an image URL and return it as Gemini inline_data (base64). */
+async function fetchInlineImage(url: string): Promise<{ mime_type: string; data: string } | null> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const mime = (r.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+    if (!mime.startsWith('image/')) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length > 6_000_000) return null; // skip oversized
+    return { mime_type: mime, data: buf.toString('base64') };
+  } catch { return null; }
+}
+
+/** Vision via Google Gemini (generativelanguage API). Images are downloaded and
+ * sent inline (Gemini's generateContent can't fetch arbitrary URLs itself). */
+async function describeImagesGemini(urls: string[]): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const imgs = (await Promise.all(urls.slice(0, 3).map(fetchInlineImage))).filter(Boolean) as { mime_type: string; data: string }[];
+  if (!imgs.length) return null;
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: VISION_PROMPT }, ...imgs.map(i => ({ inline_data: i }))] }],
+        generationConfig: { maxOutputTokens: 300, temperature: 0.4 },
+      }),
+    });
+    if (!res.ok) { console.warn('[Bot] gemini vision', res.status, (await res.text()).slice(0, 200)); return null; }
+    const j = await res.json();
+    const text = (j?.candidates?.[0]?.content?.parts || []).map((p: any) => p.text).filter(Boolean).join(' ').trim();
+    return text || null;
+  } catch (e) { console.warn('[Bot] gemini vision failed:', (e as Error).message); return null; }
+}
+
+/** Describe customer-sent images so a text LLM (DeepSeek) can use them. Prefers
+ * Gemini (GEMINI_API_KEY), falls back to OpenAI gpt-4o-mini (OPENAI_API_KEY);
+ * returns null if neither is set (DeepSeek's chat API can't read images). */
 async function describeImages(urls: string[]): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY || !urls.length) return null;
+  if (!urls.length) return null;
+  if (process.env.GEMINI_API_KEY) {
+    const g = await describeImagesGemini(urls);
+    if (g) return g;
+  }
+  if (!process.env.OPENAI_API_KEY) return null;
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const r = await openai.chat.completions.create({
@@ -201,7 +245,7 @@ async function describeImages(urls: string[]): Promise<string | null> {
       messages: [{
         role: 'user',
         content: [
-          { type: 'text' as const, text: 'ลูกค้าร้านออนไลน์ส่งรูปนี้มาในแชท อธิบายสั้นๆ เป็นภาษาไทยว่าในรูปมีอะไร (สินค้าอะไร/อาการเสีย/สลิปโอนเงิน/หน้าจอ/เอกสาร ฯลฯ) เพื่อช่วยแอดมินตอบ' },
+          { type: 'text' as const, text: VISION_PROMPT },
           ...urls.slice(0, 3).map(u => ({ type: 'image_url' as const, image_url: { url: u } })),
         ],
       }],
