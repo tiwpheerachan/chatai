@@ -1010,7 +1010,7 @@ export function InboxClient({ userId }: { userId: string }) {
                   )}
                 </div>
               )}
-              <div className="p-3 flex items-end gap-2 relative">
+              <div className="px-3 pt-3 pb-5 flex items-end gap-2 relative">
                 <input ref={fileRef} type="file" accept="image/*" className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) sendImageFile(f); }} />
                 <div className="relative">
