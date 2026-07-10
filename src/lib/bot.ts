@@ -155,6 +155,24 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
 
 export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; sawImage?: boolean; blocks: string[]; }
 
+/**
+ * Robustly pull a JSON object out of an LLM response. Handles the common ways a
+ * model wraps it: ```json fences anywhere, a leading newline/prose before the
+ * object, or trailing commentary. Returns the parsed object or null — so callers
+ * never accidentally show raw `{"messages":[...]}` scaffolding to the user.
+ */
+export function extractJson(raw: string | null | undefined): any | null {
+  if (!raw) return null;
+  const s = raw.replace(/```(?:json)?/gi, ' ').trim();
+  try { return JSON.parse(s); } catch { /* try to locate the object */ }
+  const first = s.indexOf('{');
+  const last = s.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    try { return JSON.parse(s.slice(first, last + 1)); } catch { /* give up */ }
+  }
+  return null;
+}
+
 // Strip AI-tell markdown so drafts read like a human typed them in a chat box:
 // removes bold/italic/code/heading syntax and leading bullet or number markers,
 // but keeps emoji, Thai text and normal punctuation untouched.
@@ -386,12 +404,16 @@ export async function draftReply(opts: {
   let needsHuman = false;
   let reason = '';
   if (raw) {
-    try {
-      const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-      if (j && Array.isArray(j.messages)) { blocks = toBlocks(j.messages); needsHuman = !!j.needs_human; reason = j.reason || ''; }
-      else if (j && typeof j.reply === 'string') { blocks = toBlocks(j.reply); needsHuman = !!j.needs_human; reason = j.reason || ''; }
-      else blocks = toBlocks(raw);
-    } catch { blocks = toBlocks(raw); }
+    const j = extractJson(raw);
+    if (j && Array.isArray(j.messages)) { blocks = toBlocks(j.messages); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+    else if (j && typeof j.reply === 'string') { blocks = toBlocks(j.reply); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+    else if (j && typeof j.text === 'string') { blocks = toBlocks(j.text); needsHuman = !!j.needs_human; reason = j.reason || ''; }
+    else {
+      // Not JSON we recognize — treat as plain text, but never leak JSON scaffolding.
+      const looksJson = /^\s*\{[\s\S]*"(messages|reply|needs_human)"/.test(raw);
+      blocks = looksJson ? [] : toBlocks(raw);
+      if (!blocks.length) { needsHuman = true; reason = reason || 'ระบบอ่านคำตอบ AI ไม่สำเร็จ ลองกด “ร่างใหม่”'; }
+    }
     reply = blocks.join('\n\n');
   }
   if (!reply) {

@@ -1,4 +1,4 @@
-import { callLLM, stripAiTells } from '@/lib/bot';
+import { callLLM, stripAiTells, extractJson } from '@/lib/bot';
 import type { Message } from '@/types/database';
 
 // ============================================================
@@ -95,8 +95,8 @@ export async function analyzeConversation(conversationId: string, history: Messa
 
   try {
     const raw = await callLLM(system, [{ role: 'user', content: `บทสนทนา:\n${transcript}\n\nข้อความล่าสุดของลูกค้า: "${lastCustomer}"` }], { temperature: 0.3 });
-    if (!raw) return fallback;
-    const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    const j = extractJson(raw);
+    if (!j) return fallback;
     const insight: ChatInsight = {
       mood: normMood(j?.mood),
       urgency: normUrg(j?.urgency),

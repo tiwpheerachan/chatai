@@ -1,4 +1,4 @@
-import { callLLM, stripAiTells } from '@/lib/bot';
+import { callLLM, stripAiTells, extractJson } from '@/lib/bot';
 import { REPLY_MAX_LEN } from './shopee-reply';
 import { suggestReply } from './template';
 import { commentPriority, type PriorityLevel } from './priority';
@@ -42,8 +42,8 @@ export async function triageComment(c: Pick<CommentRow, 'comment_text' | 'rating
 
   try {
     const raw = await callLLM(system, [{ role: 'user', content: `${info}\nรีวิว: "${text}"` }], { temperature: 0.3 });
-    if (!raw) return fallback;
-    const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    const j = extractJson(raw);
+    if (!j) return fallback;
     const level = (['critical', 'high', 'medium', 'low'] as const).includes(j?.level) ? j.level as PriorityLevel : base.level;
     const steps = Array.isArray(j?.steps) ? j.steps.map((s: unknown) => stripAiTells(String(s)).trim()).filter(Boolean).slice(0, 5) : fallback.steps;
     return {
@@ -85,11 +85,8 @@ export async function draftCommentReply(c: Pick<CommentRow, 'comment_id' | 'comm
   try {
     const raw = await callLLM(system, [{ role: 'user', content: user }], { temperature: 0.7 });
     if (!raw) return template;
-    let reply = '';
-    try {
-      const j = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-      reply = typeof j?.reply === 'string' ? j.reply : raw;
-    } catch { reply = raw; }
+    const j = extractJson(raw);
+    let reply = typeof j?.reply === 'string' ? j.reply : (j ? '' : raw);
     reply = stripAiTells(reply).trim();
     if (!reply) return template;
     return reply.length > REPLY_MAX_LEN ? reply.slice(0, REPLY_MAX_LEN).trim() : reply;
