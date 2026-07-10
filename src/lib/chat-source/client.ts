@@ -295,23 +295,29 @@ export async function getBuyerOrders(
  * and any failure is swallowed (the order list still renders).
  */
 export async function enrichOrderItems(shopId: string, orders: BuyerOrder[], opts: { maxLookups?: number } = {}): Promise<void> {
+  // Normalize: drop "[TAG]"/"【TAG】" markers, collapse spaces, lowercase.
+  const clean = (s?: string) => (s || '').replace(/\[[^\]]*\]/g, '').replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const norm = (s?: string) => (s || '').trim().toLowerCase();
+
   const names = [...new Set(orders.flatMap(o => (o.items || []).map(it => it.item_name)).filter(Boolean))].slice(0, opts.maxLookups ?? 6);
   if (!names.length) return;
   const byName = new Map<string, CatalogProduct[]>();
   await Promise.all(names.map(async (name) => {
-    // Strip "[TAG]" prefixes, use the first few distinctive words as the query.
-    const q = name.replace(/\[[^\]]*\]/g, '').trim().split(/\s+/).slice(0, 4).join(' ');
-    try { byName.set(name, await searchProducts(shopId, { q, limit: 20 })); } catch { /* ignore */ }
+    // First 3 significant words = a forgiving-but-specific catalog query.
+    const q = clean(name).split(' ').slice(0, 3).join(' ');
+    try { byName.set(name, await searchProducts(shopId, { q, limit: 30 })); } catch { /* ignore */ }
   }));
-  const norm = (s?: string) => (s || '').trim().toLowerCase();
   for (const o of orders) {
     for (const it of o.items || []) {
       const prods = byName.get(it.item_name) || [];
       if (!prods.length) continue;
+      const oKey = clean(it.item_name).slice(0, 16);
+      // Confident match only: the catalog title must share the same 16-char prefix
+      // (same product line), preferring the exact variant. No blind fallback — a
+      // wrong price/image is worse than showing just name/qty for old/delisted items.
       const m =
-        prods.find(p => it.model_name && norm(p.model_name) === norm(it.model_name)) ||
-        prods.find(p => norm(p.item_name) === norm(it.item_name)) ||
-        prods[0];
+        prods.find(p => clean(p.item_name).slice(0, 16) === oKey && (!it.model_name || norm(p.model_name) === norm(it.model_name))) ||
+        prods.find(p => clean(p.item_name).slice(0, 16) === oKey);
       if (!m) continue;
       it.item_id = m.item_id;
       it.item_sku = m.model_sku || m.item_sku;
