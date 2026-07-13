@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from './supabase/server';
@@ -27,8 +28,13 @@ export interface AuthContext {
 /**
  * Resolve the current user's full context (or null if not signed in).
  * Use in server components/layouts. API routes should use `authorize()`.
+ *
+ * Wrapped in React `cache()` so the layout + the page (and any other server
+ * component) in the SAME request reuse ONE result instead of each re-running
+ * getUser() + the profile/role queries — this was the main cause of slow
+ * page-to-page navigation (auth work ran 2–3× per nav).
  */
-export async function getCurrentContext(): Promise<AuthContext | null> {
+export const getCurrentContext = cache(async (): Promise<AuthContext | null> => {
   const sb = createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
@@ -69,7 +75,7 @@ export async function getCurrentContext(): Promise<AuthContext | null> {
     canSeeBrand: (b: string | null) => scopeAllowsBrand(scope, b),
     canSeeChannel: (c: string | null) => scopeAllowsChannel(scope, c),
   };
-}
+});
 
 /**
  * Server-side guard for API routes.

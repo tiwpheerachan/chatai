@@ -1,7 +1,11 @@
+import { cache } from 'react';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-export function createClient() {
+// Memoized per request: one client instance is reused across the layout, page,
+// and any nested server components in the same render, instead of rebuilding it
+// (and re-reading cookies) on every call.
+export const createClient = cache(function createClient() {
   const cookieStore = cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -18,4 +22,4 @@ export function createClient() {
       },
     },
   );
-}
+});

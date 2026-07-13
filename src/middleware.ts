@@ -24,7 +24,13 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // getSession() reads (and refreshes when expired) the token from cookies
+  // WITHOUT a network validation call on the common valid-token path — far
+  // cheaper than getUser() on every navigation. This is only the redirect gate;
+  // real data access is still validated by getUser() in getCurrentContext /
+  // authorize() (server components + API routes), so security is unchanged.
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   const pathname = request.nextUrl.pathname;
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/signup');
