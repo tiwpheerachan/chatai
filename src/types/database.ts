@@ -25,6 +25,8 @@ export interface Profile {
   status: string;
   allowed_brand_ids: string[] | null;   // null = inherit role default
   allowed_channels: ChannelType[] | null; // null = inherit role default
+  auto_assign?: boolean;                 // opt-in to smart chat auto-distribution
+  max_open_chats?: number | null;        // capacity cap; null = unlimited
   created_at: string;
 }
 

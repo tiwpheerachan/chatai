@@ -20,7 +20,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 
   const patch: Record<string, unknown> = {};
-  for (const k of ['role', 'status', 'brand_id', 'allowed_brand_ids', 'allowed_channels'] as const) {
+  for (const k of ['role', 'status', 'brand_id', 'allowed_brand_ids', 'allowed_channels', 'auto_assign', 'max_open_chats'] as const) {
     if (k in body) patch[k] = (body as Record<string, unknown>)[k];
   }
   if (!Object.keys(patch).length) return NextResponse.json({ ok: true });

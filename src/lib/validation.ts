@@ -132,6 +132,8 @@ export const userAdminUpdateSchema = z.object({
   brand_id: uuid.nullish(),
   allowed_brand_ids: z.array(uuid).nullable().optional(),     // null = inherit role
   allowed_channels: z.array(channelEnum).nullable().optional(),
+  auto_assign: z.boolean().optional(),                        // opt-in to the auto-distribution queue
+  max_open_chats: z.number().int().min(0).max(100000).nullable().optional(), // null = unlimited
 }).strict();
 
 export const rolePermissionsUpdateSchema = z.object({

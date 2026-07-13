@@ -33,6 +33,9 @@ export function TeamClient({
   return (
     <>
       <div className="flex justify-end mb-4 gap-2">
+        <Link href="/admin/workload">
+          <Button variant="outline" icon={Sparkles}>แบ่งงาน & Performance</Button>
+        </Link>
         <Link href="/admin/team/roles">
           <Button variant="outline" icon={SlidersHorizontal}>จัดการสิทธิ์ตาม Role</Button>
         </Link>
@@ -133,8 +136,11 @@ function EditUserModal({
   const [brandIds, setBrandIds] = useState<string[]>(user.allowed_brand_ids ?? []);
   const [chanMode, setChanMode] = useState<'inherit' | 'custom'>(user.allowed_channels === null ? 'inherit' : 'custom');
   const [channels, setChannels] = useState<ChannelType[]>(user.allowed_channels ?? []);
+  const [autoAssign, setAutoAssign] = useState<boolean>(user.auto_assign ?? true);
+  const [maxOpen, setMaxOpen] = useState<string>(user.max_open_chats != null ? String(user.max_open_chats) : '');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const isQueueRole = ['agent', 'supervisor', 'admin'].includes(role);
 
   const toggle = <T,>(arr: T[], v: T, set: (a: T[]) => void) =>
     set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
@@ -149,6 +155,8 @@ function EditUserModal({
         status,
         allowed_brand_ids: brandMode === 'inherit' ? null : brandIds,
         allowed_channels: chanMode === 'inherit' ? null : channels,
+        auto_assign: autoAssign,
+        max_open_chats: maxOpen.trim() === '' ? null : Math.max(0, parseInt(maxOpen, 10) || 0),
       }),
     });
     setSaving(false);
@@ -231,6 +239,22 @@ function EditUserModal({
             </div>
           )}
         </div>
+
+        {/* Auto-distribution capacity */}
+        {isQueueRole && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2.5">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-xs font-semibold text-slate-700">รับแชทจากการแบ่งงานอัตโนมัติ</span>
+              <input type="checkbox" checked={autoAssign} onChange={e => setAutoAssign(e.target.checked)} />
+            </label>
+            <p className="text-[11px] text-slate-400 -mt-1">ปิดไว้ = คนนี้จะไม่ถูกจ่ายแชทอัตโนมัติ (ยังรับแชทที่มอบหมายเองได้)</p>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-700">จำกัดแชทค้างพร้อมกันสูงสุด</span>
+              <input type="number" min={0} placeholder="ไม่จำกัด" value={maxOpen} onChange={e => setMaxOpen(e.target.value)}
+                className="w-24 text-sm rounded-lg border border-slate-200 px-2 py-1 text-right" />
+            </div>
+          </div>
+        )}
 
         <p className="text-[11px] text-slate-400 flex items-center gap-1">
           <Sparkles className="w-3 h-3" /> Owner เห็นทุกแบรนด์/ช่องทางเสมอ — การตั้งค่านี้ไม่มีผลกับ Owner

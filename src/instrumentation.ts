@@ -42,6 +42,18 @@ export async function register() {
       const bfConv = bf.reduce((s, x) => s + (x?.conversations || 0), 0);
       const done = bf.filter((x) => x?.caught_up).length;
       if (bf.length) console.log(`[cron] backfill — ${bf.length} shops, +${bfConv} conv, ${done} now caught up`);
+
+      // Smart distribution: auto-assign the freshly-arrived WAITING queue to
+      // eligible online agents (no-op when disabled or no online agents).
+      try {
+        const { getSettings, autoAssignQueue } = await import('@/lib/assignment');
+        if ((await getSettings()).enabled) {
+          const a = await autoAssignQueue({ limit: 300 });
+          if (a.assigned) console.log(`[cron] auto-assign — ${a.assigned} chats to ${Object.keys(a.perAgent).length} agents`);
+        }
+      } catch (e) {
+        console.error('[cron] auto-assign failed:', (e as Error)?.message);
+      }
     } catch (e) {
       console.error('[cron] sweep failed:', (e as Error)?.message);
     } finally {
