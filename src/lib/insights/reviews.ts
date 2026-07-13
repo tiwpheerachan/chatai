@@ -79,6 +79,28 @@ export async function fetchComments(f: InsightFilters, cap = 40000): Promise<Raw
   return out;
 }
 
+/**
+ * Fill displayName + image on the top-N products by matching their item_id
+ * (product_id, or product_name which stores the id in the source) against the
+ * products catalog. Mutates in place; best-effort (leaves nulls on miss).
+ */
+export async function attachProductMeta(products: ProductProblem[], limit = 60): Promise<void> {
+  const sb = commentsClient();
+  if (!sb || !products.length) return;
+  const top = products.slice(0, limit);
+  const ids = [...new Set(top.flatMap(p => [p.product_id, p.product_name]).filter(Boolean) as string[])];
+  if (!ids.length) return;
+  const meta = new Map<string, { name: string | null; img: string | null }>();
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await sb.from('products').select('item_id,item_name,thumbnail_url,image_url').in('item_id', ids.slice(i, i + 300));
+    for (const p of (data as any[]) || []) meta.set(String(p.item_id), { name: p.item_name ?? null, img: p.thumbnail_url || p.image_url || null });
+  }
+  for (const p of top) {
+    const m = (p.product_id && meta.get(String(p.product_id))) || (p.product_name && meta.get(String(p.product_name))) || null;
+    if (m) { p.displayName = m.name; p.image = m.img; }
+  }
+}
+
 const isNeg = (r: RawComment) => r.sentiment === 'negative' || (r.rating != null && r.rating <= 2);
 const dayKey = (iso: string | null) => (iso ? iso.slice(0, 10) : '');
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
@@ -87,6 +109,8 @@ const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 :
 export interface ProductProblem {
   product_id: string | null;
   product_name: string | null;
+  displayName: string | null;  // real item_name from the products catalog
+  image: string | null;        // product thumbnail
   negatives: number;
   total: number;
   negRate: number;             // %
@@ -144,7 +168,7 @@ export function reviewAnalysis(rows: RawComment[]): ReviewAnalysis {
         .map(([label, v]) => ({ label, group: v.group, count: v.count }));
       const sample = p.negs.map(n => (n.summary || '').trim()).find(Boolean) || '';
       return {
-        product_id: p.id, product_name: p.name,
+        product_id: p.id, product_name: p.name, displayName: null, image: null,
         negatives: p.negs.length, total: p.total, negRate: pct(p.negs.length, p.total),
         problems, sample,
       };

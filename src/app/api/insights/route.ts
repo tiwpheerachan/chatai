@@ -3,7 +3,7 @@ import { authorize } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { commentsConfigured } from '@/lib/comments/db';
 import {
-  fetchComments, reviewAnalysis, shopPerformance, pendingOverview,
+  fetchComments, reviewAnalysis, shopPerformance, pendingOverview, attachProductMeta,
   type InsightView, type InsightFilters,
 } from '@/lib/insights/reviews';
 
@@ -39,10 +39,14 @@ export async function GET(req: Request) {
 
   try {
     const rows = await fetchComments(filters);
-    const data =
-      view === 'performance' ? { perf: shopPerformance(rows) }
-      : view === 'pending' ? pendingOverview(rows)
-      : reviewAnalysis(rows);
+    let data: Record<string, unknown>;
+    if (view === 'performance') data = { perf: shopPerformance(rows) };
+    else if (view === 'pending') data = pendingOverview(rows) as unknown as Record<string, unknown>;
+    else {
+      const ra = reviewAnalysis(rows);
+      await attachProductMeta(ra.products).catch(() => {});   // fill name+image for the table
+      data = ra as unknown as Record<string, unknown>;
+    }
     return NextResponse.json({ configured: true, view, ...data });
   } catch (e) {
     return NextResponse.json({ configured: true, error: (e as Error).message }, { status: 200 });

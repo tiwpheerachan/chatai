@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Topbar } from '@/components/layout/topbar';
+import { Fi } from '@/components/ui/fi';
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, PieChart, Pie, Cell,
@@ -115,24 +116,33 @@ export function InsightsClient({ configured, brands }: { configured: boolean; br
     fetch(`/api/insights?${qs}`).then(r => r.json()).then(setData).catch(() => setData({ error: 'โหลดข้อมูลไม่สำเร็จ' })).finally(() => setLoading(false));
   }, [tab, brand, range.from, range.to, configured]);
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'reviews', label: 'การวิเคราะห์รีวิว' },
-    { key: 'performance', label: 'ผลการดำเนินงานร้านค้า' },
-    { key: 'pending', label: 'ข้อมูลรอจัดการ' },
+  const tabs: { key: Tab; label: string; desc: string; icon: string; tint: string; ring: string; chip: string }[] = [
+    { key: 'reviews', label: 'การวิเคราะห์รีวิว', desc: 'ปัญหา/ความเห็นเชิงลบรายสินค้า', icon: 'comment-alt', tint: 'text-indigo-600', ring: 'border-indigo-300 ring-indigo-100 bg-indigo-50/60', chip: 'bg-indigo-100 text-indigo-600' },
+    { key: 'performance', label: 'ผลการดำเนินงานร้านค้า', desc: 'CSAT · อัตราตอบกลับ รายแบรนด์', icon: 'shop', tint: 'text-emerald-600', ring: 'border-emerald-300 ring-emerald-100 bg-emerald-50/60', chip: 'bg-emerald-100 text-emerald-600' },
+    { key: 'pending', label: 'งานที่รอจัดการ', desc: 'SLA · เวลาแก้ไข · ตามหมวด', icon: 'time-check', tint: 'text-amber-600', ring: 'border-amber-300 ring-amber-100 bg-amber-50/60', chip: 'bg-amber-100 text-amber-600' },
   ];
 
   return (
     <>
       <Topbar title="วิเคราะห์เชิงลึก" subtitle="รีวิว · ผลการดำเนินงานร้านค้า · งานที่รอจัดการ" />
       <div className="p-6 space-y-5 overflow-y-auto scroll-thin flex-1">
-        {/* tabs */}
-        <div className="flex gap-1 border-b border-slate-200">
-          {tabs.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition ${tab === t.key ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-              {t.label}
-            </button>
-          ))}
+        {/* category selector */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {tabs.map(t => {
+            const on = tab === t.key;
+            return (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={`flex items-center gap-3 text-left rounded-2xl border p-3.5 transition shadow-sm ${on ? `${t.ring} ring-2` : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+                <span className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 ${on ? t.chip : 'bg-slate-100 text-slate-400'}`}>
+                  <Fi name={t.icon} className="text-lg" />
+                </span>
+                <span className="min-w-0">
+                  <span className={`block text-sm font-semibold ${on ? t.tint : 'text-slate-700'}`}>{t.label}</span>
+                  <span className="block text-[11px] text-slate-400 truncate">{t.desc}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* filter bar */}
@@ -203,9 +213,17 @@ function ReviewsView({ d }: { d: any }) {
               <tbody>
                 {products.slice(0, 50).map((p, i) => (
                   <tr key={i} className="border-b border-slate-50 align-top">
-                    <td className="py-3 pr-3 max-w-[280px]">
-                      <div className="font-medium text-slate-700 line-clamp-2">{p.product_name || p.product_id || '—'}</div>
-                      {p.sample && <div className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">“{p.sample}”</div>}
+                    <td className="py-3 pr-3 max-w-[320px]">
+                      <div className="flex items-start gap-3">
+                        {p.image
+                          ? <img src={p.image} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-100 shrink-0" loading="lazy" />
+                          : <div className="w-12 h-12 rounded-lg bg-slate-100 grid place-items-center text-slate-300 shrink-0"><Fi name="picture" /></div>}
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-700 line-clamp-2">{p.displayName || p.product_name || p.product_id || '—'}</div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">#{p.product_id || p.product_name}</div>
+                          {p.sample && <div className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">“{p.sample}”</div>}
+                        </div>
+                      </div>
                     </td>
                     <td className="py-3 px-3">
                       <div className="flex flex-col gap-1">
