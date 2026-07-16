@@ -408,11 +408,15 @@ export function InboxClient({ userId }: { userId: string }) {
       .catch(() => setStock({ configured: true, products: [], error: 'query_error' }))
       .finally(() => setStockLoading(false));
   }, []);
-  // On opening the stock tab, auto-check the customer's ordered items (if any).
+  // On opening the stock tab, auto-check the customer's ordered product. The
+  // warehouse view keys on SKU / product name (its item_id is a JST/ERP code, NOT
+  // the Shopee item_id), so we search by the ordered item's NAME — most reliable.
   useEffect(() => {
     if (panelTab !== 'stock' || stock !== null) return;
-    const ids = (buyerOrders?.list || []).flatMap((o: any) => (o.items || []).map((it: any) => it.item_id).filter(Boolean));
-    if (ids.length) searchStock({ itemIds: ids });
+    const firstItem = (buyerOrders?.list || []).flatMap((o: any) => o.items || [])[0];
+    const name = (firstItem?.item_name || '').replace(/\[[^\]]*\]/g, '').replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim();
+    const q = name.split(' ').slice(0, 4).join(' ');
+    if (q.length >= 2) { setStockQ(q); searchStock({ q }); }
     else setStock({ configured: true, products: [] });
   }, [panelTab, stock, buyerOrders, searchStock]);
 
