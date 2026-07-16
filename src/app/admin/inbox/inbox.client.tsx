@@ -417,6 +417,15 @@ export function InboxClient({ userId }: { userId: string }) {
     finally { setSending(false); }
   };
 
+  // Send a how-to video link as a normal text message (human-triggered).
+  const sendTutorial = async (v: any) => {
+    if (!active || sending || !v?.url) return;
+    setSending(true);
+    try { await postMessage(`ดูวิธีใช้งานได้จากคลิปนี้เลยนะคะ 🙏\n${v.url}`); refreshActive(); }
+    catch (e) { alert((e as Error).message); }
+    finally { setSending(false); }
+  };
+
   const sendVoucherCard = async (v: any) => {
     if (!active || sending) return;
     setSending(true);
@@ -1240,6 +1249,27 @@ export function InboxClient({ userId }: { userId: string }) {
                             <span className="text-[10px] font-semibold text-indigo-600 shrink-0">฿{Number(p.price).toLocaleString()}</span>
                             <Fi name="paper-plane" className="text-[11px] text-slate-300 shrink-0" />
                           </button>
+                        ))}
+                      </div>
+                    )}
+                    {(aiDraft.tutorialVideos?.length ?? 0) > 0 && (
+                      <div className="pt-1 space-y-1">
+                        <div className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                          <Fi name="play-circle" className="text-[11px]" /> คลิปสอนใช้งาน (กดเพื่อส่งลิงก์ให้ลูกค้า)
+                        </div>
+                        {aiDraft.tutorialVideos.map((v: any, i: number) => (
+                          <div key={i} className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 hover:border-rose-300 hover:bg-rose-50/30">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            {v.thumbnail ? <img src={v.thumbnail} alt="" className="w-10 h-7 rounded object-cover shrink-0" /> : <div className="w-10 h-7 rounded bg-rose-100 grid place-items-center shrink-0"><Fi name="play" className="text-[10px] text-rose-500" /></div>}
+                            <div className="flex-1 min-w-0">
+                              <a href={v.url} target="_blank" rel="noopener noreferrer" className="block text-[11px] text-slate-700 line-clamp-1 hover:underline">{v.title}</a>
+                              <span className="text-[9px] text-slate-400">{v.source === 'kb' ? 'จากคลังความรู้' : (v.channel || 'YouTube')}</span>
+                            </div>
+                            <button onClick={() => sendTutorial(v)} disabled={sending}
+                              className="text-[10px] font-medium text-white bg-rose-500 hover:bg-rose-600 rounded-md px-2 py-1 shrink-0 disabled:opacity-50 flex items-center gap-1">
+                              <Fi name="paper-plane" className="text-[10px]" /> ส่ง
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}

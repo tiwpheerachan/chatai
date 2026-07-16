@@ -44,6 +44,11 @@ services:
         sync: false          # ← paste the Gemini API key in the Render dashboard (not committed)
       - key: GEMINI_MODEL
         value: gemini-2.0-flash
+      # ---- Tutorial-video finder (AI draft suggests a real how-to clip) ----
+      # KB-curated YouTube links are used first; this key enables real YouTube
+      # search as the fallback. Without it, only KB links are offered (no guessing).
+      - key: YOUTUBE_API_KEY
+        sync: false          # ← paste a YouTube Data API v3 key in the Render dashboard (not committed)
       # ---- Comment-reply feature (Shopee review comments) ----
       # Reads comments from the shopee-comment-ai Supabase project:
       - key: COMMENTS_SUPABASE_URL

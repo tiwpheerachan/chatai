@@ -3,7 +3,12 @@ import { createAdminClient } from './supabase/admin';
 import { retrieve, type RetrievedDoc } from './rag';
 import { getPlaybook, matchScenario, type PlaybookScenario } from './playbook';
 import { getBuyerOrders, searchProducts, getItemsByIds, type BuyerOrder } from './chat-source/client';
+import { resolveTutorial, type TutorialVideo } from './youtube';
 import type { Message } from '@/types/database';
+
+// A customer who can't work out how to USE the product — the case where a how-to
+// video helps more than text. Kept narrow so it doesn't fire on general questions.
+const HOWTO_RE = /วิธีใช้|ใช้ยัง?ไง|ใช้ไม่เป็น|ใช้ไม่ถูก|ใช้ไม่ค่อยเป็น|ตั้งค่ายัง?ไง|ตั้งค่าไม่|เชื่อมต่อไม่|เชื่อมไม่|จับคู่|pair|reset|รีเซ็ต|รีเซต|เปิดเครื่องยัง?ไง|วิธีการ|สอนใช้|ต่อ\s*wifi|เชื่อม\s*wifi|ติดตั้งยัง?ไง|วิธีติดตั้ง|setup|how ?to|กดตรงไหน|ทำไง|ทำยัง?ไง|มีคลิป|มีวิดีโอ|ดูวิธี/i;
 
 // Shopee order_status → our playbook condition + a Thai label, so the draft can
 // pick the right strategy AND tell the buyer their real status.
@@ -153,7 +158,7 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
   return out;
 }
 
-export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; sawImage?: boolean; blocks: string[]; }
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; tutorialVideos?: TutorialVideo[]; sawImage?: boolean; blocks: string[]; }
 
 /**
  * Robustly pull a JSON object out of an LLM response. Handles the common ways a
@@ -458,6 +463,20 @@ export async function draftReply(opts: {
     .filter((p: any, i: number, a: any[]) => p?.item_id && a.findIndex((x: any) => x.item_id === p.item_id) === i)
     .slice(0, 4)
     .map((p: any) => ({ item_id: p.item_id, item_name: p.item_name, price: p.price, image_url: p.image_url, in_stock: p.in_stock }));
+
+  // How-to case: find a REAL tutorial video (KB link first, then YouTube search)
+  // for the product being discussed. Only when the customer is clearly asking how
+  // to USE it — light questions get a normal typed reply, no video. Never fabricated.
+  let tutorialVideos: TutorialVideo[] = [];
+  if (HOWTO_RE.test(topicText)) {
+    const prodName = (referencedProducts[0]?.item_name || products[0]?.item_name || suggest[0]?.item_name || '')
+      .replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    let brandSlug: string | null = null;
+    if (brand_id) { const { data } = await sb.from('brands').select('slug').eq('id', brand_id).maybeSingle(); brandSlug = (data as any)?.slug || null; }
+    tutorialVideos = await resolveTutorial({ brandId: brand_id, brandSlug, productName: prodName || null, keywords: topicText.slice(0, 120) }).catch(() => []);
+    if (tutorialVideos.length) used.push(`คลิปสอนใช้งาน (${tutorialVideos[0].source === 'kb' ? 'จาก KB' : 'YouTube'})`);
+  }
+
   return {
     text: reply,
     blocks,
@@ -471,6 +490,8 @@ export async function draftReply(opts: {
     used,
     // Real products to offer/send (buyer-referenced first, then catalog matches).
     suggestedProducts: suggest,
+    // Real how-to video(s) to send when the customer can't use the product.
+    tutorialVideos,
     sawImage: images.length > 0,
   };
 }
