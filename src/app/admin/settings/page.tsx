@@ -1,12 +1,12 @@
 import { Topbar } from '@/components/layout/topbar';
 import { Card } from '@/components/ui/card';
 import Link from 'next/link';
-import { Building2, Clock, Bell, Webhook } from 'lucide-react';
+import { Building2, Webhook } from 'lucide-react';
 
+// SLA + Alerts cards were removed — they linked to pages that don't exist yet
+// (404). Re-add them here when /admin/settings/sla and /alerts are built.
 const SECTIONS = [
   { href: '/admin/settings/brands', label: 'แบรนด์', desc: 'จัดการแบรนด์หลายแบรนด์ (multi-tenant)', icon: Building2 },
-  { href: '/admin/settings/sla',    label: 'SLA',    desc: 'กฎเวลาตอบ + escalation',           icon: Clock },
-  { href: '/admin/settings/alerts', label: 'Alerts', desc: 'แจ้งเตือนเมื่อมีปัญหา',                 icon: Bell },
   { href: '/admin/channels',        label: 'Webhooks', desc: 'URL สำหรับเชื่อมต่อแต่ละ platform',  icon: Webhook },
 ];
 

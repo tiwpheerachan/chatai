@@ -354,17 +354,24 @@ export function InboxClient({ userId }: { userId: string }) {
     if (!id) return;
     setDraftLoading(true); setDraftCopied(false); setSentBlocks([]);
     const qs = ids && ids.length ? `?sel=${ids.join(',')}` : '';
-    fetch(`/api/conversations/${id}/draft${qs}`).then(r => r.json())
+    fetch(`/api/conversations/${id}/draft${qs}`)
+      .then(async r => (r.ok ? r.json() : { text: '', error: true, errorMsg: (await r.json().catch(() => ({}))).error }))
       .then(d => { if (id === activeIdRef.current) setAiDraft(d); })
       .catch(() => { if (id === activeIdRef.current) setAiDraft({ text: '', error: true }); })
       .finally(() => { if (id === activeIdRef.current) setDraftLoading(false); });
   }, []);
+  // Guard against an auto-draft loop: remember the last (chat,message) we attempted
+  // so an error/429 (whose payload has no forMessageId) doesn't re-fire endlessly.
+  const draftAttemptRef = useRef<string | null>(null);
   useEffect(() => {
     // Auto-draft only when the chat is actually waiting on us (last message is the
     // customer's) — don't burn LLM calls on chats we've already answered.
     if (!activeId || panelTab !== 'draft' || !needsReply) return;
     const lcId = lastMsg ? (lastMsg as any).id : null;
-    if (aiDraft && aiDraft.forMessageId === lcId) return; // already drafted for this exact message
+    if (aiDraft && aiDraft.forMessageId === lcId) return;  // already drafted for this exact message
+    const key = `${activeId}:${lcId}`;
+    if (draftAttemptRef.current === key) return;           // already attempted (even if it errored) — no loop
+    draftAttemptRef.current = key;
     fetchDraft();
   }, [panelTab, activeId, needsReply, lastMsg, aiDraft, fetchDraft]);
 
@@ -373,8 +380,10 @@ export function InboxClient({ userId }: { userId: string }) {
     const id = activeIdRef.current;
     if (!id) return;
     setInsightLoading(true);
-    fetch(`/api/conversations/${id}/insight`).then(r => r.json())
-      .then(d => { if (id === activeIdRef.current) setInsight(d); })
+    // Guard: a 429/500 returns an {error} body — don't render it as a real "0% /
+    // neutral / low" analysis. Only accept an ok response.
+    fetch(`/api/conversations/${id}/insight`).then(r => (r.ok ? r.json() : null))
+      .then(d => { if (id === activeIdRef.current) setInsight(d && !d.error ? d : null); })
       .catch(() => { if (id === activeIdRef.current) setInsight(null); })
       .finally(() => { if (id === activeIdRef.current) setInsightLoading(false); });
   }, []);
@@ -1590,7 +1599,7 @@ export function InboxClient({ userId }: { userId: string }) {
                   <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider mb-1.5">อ้างถึงในแชทนี้</div>
                   <div className="space-y-1">
                     {((active as any).order_refs as string[]).map((sn) => (
-                      <a key={sn} href="https://seller.shopee.co.th/portal/sale/order" target="_blank" rel="noreferrer"
+                      <a key={sn} href={`https://seller.shopee.co.th/portal/sale/order?source=all&searchKey=${encodeURIComponent(sn)}`} target="_blank" rel="noreferrer"
                         className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50 group">
                         <span className="font-mono text-slate-700 truncate">{sn}</span>
                         <span className="text-[10px] text-brand-600 opacity-0 group-hover:opacity-100 shrink-0">เปิด ↗</span>
