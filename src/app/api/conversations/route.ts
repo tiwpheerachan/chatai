@@ -40,12 +40,21 @@ export async function GET(req: Request) {
   if (error) ({ data, error } = await build(false)); // pinned column not there yet → fall back
   if (error) return NextResponse.json({ error: 'Query failed' }, { status: 500 });
 
+  // Personal stars for THIS user among the rows we're returning (#4).
+  const ids = (data || []).map((c: any) => c.id);
+  let starred = new Set<string>();
+  if (ids.length) {
+    const { data: st } = await sb.from('conversation_stars').select('conversation_id').eq('user_id', ctx.userId).in('conversation_id', ids);
+    starred = new Set(((st as any[]) || []).map(s => s.conversation_id));
+  }
+
   // flatten customer + brand for the inbox list. `risk` is a team-wide at-a-glance
   // flag from the latest-message preview (full-thread scan happens on open).
   const flat = (data || []).map((c: any) => {
     const rk = detectRisk(c.last_snippet);
     return {
       ...c,
+      starred: starred.has(c.id),
       customer_name: c.customer?.display_name,
       customer_avatar: c.customer?.avatar,
       brand_name: c.brand?.name ?? null,

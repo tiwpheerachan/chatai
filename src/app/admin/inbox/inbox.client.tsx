@@ -104,6 +104,11 @@ export function InboxClient({ userId }: { userId: string }) {
   const [filter, setFilter] = useState('all');
   const [brandSel, setBrandSel] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [serverHits, setServerHits] = useState<any[]>([]);   // #4 team-wide name/phone/snippet search
+  const [searching, setSearching] = useState(false);
+  const [starHits, setStarHits] = useState<any[]>([]);       // #4 my starred chats (incl. old ones)
+  const [deepLink] = useState(() => (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('c') : null));
+  const deepLinkedRef = useRef(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [hydrating, setHydrating] = useState(false);
   const [draft, setDraft] = useState('');
@@ -501,22 +506,49 @@ export function InboxClient({ userId }: { userId: string }) {
   }, [lightbox]);
 
   const filtered = useMemo(() => {
-    let base = Array.isArray(convos) ? convos : [];
+    let base: any[] = Array.isArray(convos) ? convos : [];
     if (filter === 'unread') base = convos.filter(c => c.unread > 0);
     else if (filter === 'mine') base = convos.filter(c => c.assigned_to === userId);
     else if (filter === 'ai') base = convos.filter(c => c.ai_handling);
     else if (filter === 'risk') base = convos.filter(c => (c as any).risk);
+    else if (filter === 'starred') base = starHits.length ? starHits : convos.filter(c => (c as any).starred);
     else if (filter !== 'all') base = convos.filter(c => c.channel === filter);
     // Brand filter — matches the DB-joined brand name (populated for synced Shopee convos).
     if (brandSel.length) base = base.filter(c => { const b = c.brand_name; return !!b && brandSel.includes(b); });
-    // Free-text search over customer name + last snippet + brand.
+    // Free-text search: local matches first, then MERGE team-wide server hits so
+    // chats you never handled (beyond the loaded page) still appear (#4).
     const q = search.trim().toLowerCase();
-    if (q) base = base.filter(c =>
-      (c.customer_name || '').toLowerCase().includes(q) ||
-      (c.last_snippet || '').toLowerCase().includes(q) ||
-      (c.brand_name || '').toLowerCase().includes(q));
+    if (q) {
+      const local = base.filter(c =>
+        (c.customer_name || '').toLowerCase().includes(q) ||
+        (c.last_snippet || '').toLowerCase().includes(q) ||
+        (c.brand_name || '').toLowerCase().includes(q));
+      const seen = new Set(local.map((c: any) => c.id));
+      base = [...local, ...serverHits.filter(c => !seen.has(c.id))];
+    }
     return base;
-  }, [convos, filter, userId, brandSel, search]);
+  }, [convos, filter, userId, brandSel, search, serverHits, starHits]);
+
+  // #4 Debounced team-wide search (name / phone / email / snippet across ALL chats).
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) { setServerHits([]); setSearching(false); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      fetch(`/api/conversations/search?q=${encodeURIComponent(q)}`)
+        .then(r => (r.ok ? r.json() : []))
+        .then(d => setServerHits(Array.isArray(d) ? d : []))
+        .catch(() => setServerHits([]))
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // #4 Load my starred chats (incl. old ones) when the "ดาวของฉัน" filter is active.
+  useEffect(() => {
+    if (filter !== 'starred') return;
+    fetch('/api/conversations/starred').then(r => (r.ok ? r.json() : [])).then(d => setStarHits(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [filter]);
 
   // #9 Risk-word detection — scan ALL customer messages in the open thread (not
   // just the preview), so a red banner warns the whole team before they reply.
@@ -535,9 +567,23 @@ export function InboxClient({ userId }: { userId: string }) {
   const [prodWarnDismissed, setProdWarnDismissed] = useState(false);
   useEffect(() => { setProdWarnDismissed(false); }, [activeId]);
 
+  // #7 Deep-link: open ?c=<id> (from the notification bell). Prefer the rich list
+  // object; fall back to a minimal open (the thread fills itself in).
   useEffect(() => {
+    if (deepLinkedRef.current || !deepLink) return;
+    const found = (convos as any[]).find(c => c.id === deepLink);
+    if (found) { deepLinkedRef.current = true; openConvo(found); }
+    else if (convos.length) { deepLinkedRef.current = true; openConvo({ id: deepLink } as any); }
+    if (deepLinkedRef.current && typeof window !== 'undefined') {
+      window.history.replaceState({}, '', '/admin/inbox');   // don't re-trigger on refresh
+    }
+  }, [convos, deepLink, openConvo]);
+
+  useEffect(() => {
+    // Don't auto-open the first chat while a ?c= deep-link is still pending.
+    if (deepLink && !deepLinkedRef.current) return;
     if (!activeId && filtered.length) openConvo(filtered[0]);
-  }, [filtered, activeId, openConvo]);
+  }, [filtered, activeId, openConvo, deepLink]);
 
   const refreshActive = useCallback(() => {
     if (activeIdRef.current) loadThread(activeIdRef.current);
@@ -618,6 +664,18 @@ export function InboxClient({ userId }: { userId: string }) {
     loadConvos();
   };
   const togglePin = () => patchConvo({ pinned: !(active as any)?.pinned });
+
+  // #4 Personal star (private to me) — optimistic toggle across active + list state.
+  const toggleStar = async (conv: any) => {
+    if (!conv) return;
+    const id = conv.id;
+    const next = !conv.starred;
+    setActive(prev => (prev && prev.id === id ? { ...prev, starred: next } as any : prev));
+    setConvos(prev => prev.map((c: any) => (c.id === id ? { ...c, starred: next } : c)) as any);
+    setServerHits(prev => prev.map(c => (c.id === id ? { ...c, starred: next } : c)));
+    setStarHits(prev => next ? prev : prev.filter(c => c.id !== id));
+    await fetch(`/api/conversations/${id}/star`, { method: next ? 'POST' : 'DELETE' }).catch(() => {});
+  };
   const assignTo = async (uid: string | null) => {
     setAssignOpen(false);
     if (!active) return;
@@ -713,6 +771,7 @@ export function InboxClient({ userId }: { userId: string }) {
     { id: 'all',    label: 'ทั้งหมด',    count: convos.length },
     { id: 'unread', label: 'ยังไม่อ่าน', count: convos.filter(c => c.unread > 0).length },
     { id: 'mine',   label: 'ของฉัน',     count: convos.filter(c => c.assigned_to === userId).length },
+    { id: 'starred', label: '⭐ ดาวของฉัน', count: (starHits.length || convos.filter(c => (c as any).starred).length) },
     { id: 'ai',     label: 'AI ดูแล',    count: convos.filter(c => c.ai_handling).length },
     ...(riskCount ? [{ id: 'risk', label: '⚠️ เคสเสี่ยง', count: riskCount }] : []),
   ];
@@ -727,10 +786,11 @@ export function InboxClient({ userId }: { userId: string }) {
       <div className="bg-white/60 supports-[backdrop-filter]:bg-white/50 backdrop-blur-2xl border-b border-white/60 px-4 py-2 flex flex-col gap-1.5">
         {/* Row 1: search + status */}
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative w-56">
+          <div className="relative w-64">
             <Fi name="search" className="text-base absolute left-3 top-2.5 text-slate-400" />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              className="w-full bg-slate-100 rounded-lg pl-9 pr-3 py-2 text-sm border-0 focus:ring-2 focus:ring-brand-400" placeholder="ค้นหาชื่อ / ข้อความ / แบรนด์..." />
+              className="w-full bg-slate-100 rounded-lg pl-9 pr-8 py-2 text-sm border-0 focus:ring-2 focus:ring-brand-400" placeholder="ค้นหาทั้งทีม: ชื่อ / เบอร์ / ข้อความ..." />
+            {searching && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 absolute right-2.5 top-2.5" />}
           </div>
           <div className="flex items-center gap-1.5">
             {filterTabs.map(t => {
@@ -828,6 +888,13 @@ export function InboxClient({ userId }: { userId: string }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center gap-2">
                       <span className={cn('text-sm truncate flex items-center gap-1', unread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800')}>
+                        <span role="button" tabIndex={0}
+                          onClick={(e) => { e.stopPropagation(); toggleStar(c); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); toggleStar(c); } }}
+                          title={(c as any).starred ? 'เอาดาวออก' : 'ติดดาวส่วนตัว'}
+                          className={cn('shrink-0 cursor-pointer', (c as any).starred ? 'text-amber-400' : 'text-slate-300 hover:text-amber-400')}>
+                          <Fi name={(c as any).starred ? 'star' : 'star'} className="text-[11px]" />
+                        </span>
                         {(c as any).pinned && <Fi name="thumbtack" className="text-[11px] text-amber-500 shrink-0" />}
                         <span className="truncate">{c.customer_name || '-'}</span>
                       </span>
@@ -888,6 +955,12 @@ export function InboxClient({ userId }: { userId: string }) {
                 </div>
               </div>
               <div className="flex gap-1.5">
+                {/* Personal star (#4) */}
+                <button onClick={() => toggleStar(active)} title={(active as any).starred ? 'เอาดาวออก' : 'ติดดาวส่วนตัว (เห็นเฉพาะฉัน)'}
+                  className={cn('px-2.5 py-1.5 text-xs rounded-lg border flex items-center gap-1.5',
+                    (active as any).starred ? 'border-amber-300 bg-amber-50 text-amber-600' : 'border-slate-200 hover:bg-slate-50')}>
+                  <Fi name="star" className="text-[13px]" />{(active as any).starred ? 'ติดดาวแล้ว' : 'ติดดาว'}
+                </button>
                 {/* Pin */}
                 <button onClick={togglePin} title={(active as any).pinned ? 'เลิกปักหมุด' : 'ปักหมุดแชทนี้'}
                   className={cn('px-2.5 py-1.5 text-xs rounded-lg border flex items-center gap-1.5',

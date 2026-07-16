@@ -10,6 +10,7 @@ import { ROLE_LABELS } from '@/lib/rbac';
 import { Avatar } from '@/components/ui/avatar';
 import { Wordmark } from '@/components/ui/logo';
 import { Fi } from '@/components/ui/fi';
+import { NotificationBell } from '@/components/layout/notification-bell';
 import type { UserRole } from '@/types/database';
 
 interface NavItem { href: string; label: string; icon: string; perm?: string | string[] }
@@ -140,6 +141,7 @@ export function Sidebar({
               <div className="text-[10px] text-slate-500">{user ? ROLE_LABELS[user.role] : ''}</div>
             </div>
           </Link>
+          <NotificationBell />
           <Link href="/admin/profile" className="p-1.5 text-slate-400 hover:text-brand-600" title="โปรไฟล์">
             <Fi name="user-gear" className="text-lg" />
           </Link>
