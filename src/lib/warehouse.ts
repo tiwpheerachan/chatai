@@ -75,22 +75,30 @@ export async function getStock(opts: StockQuery): Promise<StockProduct[]> {
   const hit = cache.get(ck);
   if (hit && Date.now() - hit.t < TTL) return hit.v;
 
+  // Searchable "haystack" — the warehouse text is English/SKU-code, so we search
+  // across every name field. Match by TOKENS (each word), not the whole phrase,
+  // and rank by how many tokens hit — so "hair gleam", "gleam dreame", or a messy
+  // Shopee title all still find the product. Thai tokens simply don't match (the
+  // data is English) but any English/brand/SKU token still surfaces the item.
+  const HAY = "LOWER(CONCAT(IFNULL(sku,''),' ',IFNULL(sku_name,''),' ',IFNULL(sku_short_name,''),' ',IFNULL(brand,''),' ',IFNULL(barcode,''),' ',IFNULL(CAST(item_id AS STRING),'')))";
   const where: string[] = [];
+  const score: string[] = [];
   const params: Record<string, unknown> = {};
-  if (itemIds.length) { where.push('CAST(item_id AS STRING) IN UNNEST(@itemIds)'); params.itemIds = itemIds; }
-  if (skus.length) { where.push('sku IN UNNEST(@skus)'); params.skus = skus; }
-  if (q.length >= 2) {
-    where.push('(LOWER(sku) LIKE @like OR LOWER(sku_name) LIKE @like OR CAST(item_id AS STRING) = @qexact)');
-    params.like = `%${q.toLowerCase()}%`; params.qexact = q;
-  }
+  if (itemIds.length) { where.push('CAST(item_id AS STRING) IN UNNEST(@itemIds)'); score.push('CAST(CAST(item_id AS STRING) IN UNNEST(@itemIds) AS INT64) * 5'); params.itemIds = itemIds; }
+  if (skus.length) { where.push('sku IN UNNEST(@skus)'); score.push('CAST(sku IN UNNEST(@skus) AS INT64) * 5'); params.skus = skus; }
+
+  const tokens = q ? q.toLowerCase().split(/[^\p{L}\p{N}]+/u).map(t => t.trim()).filter(t => t.length >= 2).slice(0, 6) : [];
+  tokens.forEach((t, i) => { params[`tok${i}`] = `%${t}%`; where.push(`${HAY} LIKE @tok${i}`); score.push(`CAST(${HAY} LIKE @tok${i} AS INT64)`); });
+  if (q.length >= 2 && !tokens.length) { params.likeall = `%${q.toLowerCase()}%`; where.push(`${HAY} LIKE @likeall`); score.push(`CAST(${HAY} LIKE @likeall AS INT64)`); }
   if (!where.length) return [];
 
+  const scoreExpr = score.length ? score.join(' + ') : '0';
   const sql = `
     SELECT warehouse_name, company_name, sku, sku_name, item_id, brand, picture_url,
-           actual_stock, available_stock, sales_30d, refreshed_at
+           actual_stock, available_stock, sales_30d, refreshed_at, (${scoreExpr}) AS _score
     FROM ${VIEW}
     WHERE ${where.join(' OR ')}
-    ORDER BY sku, warehouse_name
+    ORDER BY _score DESC, sales_30d DESC, available_stock DESC
     LIMIT 800`;
 
   // Let query errors propagate (the API route turns them into a clear message).
@@ -120,15 +128,23 @@ export async function getStock(opts: StockQuery): Promise<StockProduct[]> {
     p.available += avail;
     p.actual += actual;
     p.sales_30d += num(r.sales_30d);
+    // Keep the best relevance score seen for this product (drives final ranking).
+    (p as any)._score = Math.max((p as any)._score || 0, num(r._score));
     if (avail > 0 || actual > 0) p.warehouses.push({ warehouse_name: r.warehouse_name || '-', available: avail, actual });
     const ref = r.refreshed_at?.value ?? r.refreshed_at ?? null;
     if (ref && (!p.refreshed_at || String(ref) > p.refreshed_at)) p.refreshed_at = String(ref);
   }
+  // Rank: most tokens matched first, then popularity (30-day sales), then stock.
+  // (Sorting by raw stock alone let anomalous rows dominate loose matches.)
   const out = [...byKey.values()].map(p => {
     p.in_stock = p.available > 0;
     p.warehouses.sort((a, b) => b.available - a.available);
     return p;
-  }).sort((a, b) => b.available - a.available).slice(0, opts.limit ?? 50);
+  }).sort((a, b) =>
+    ((b as any)._score || 0) - ((a as any)._score || 0)
+    || b.sales_30d - a.sales_30d
+    || b.available - a.available,
+  ).slice(0, opts.limit ?? 50);
 
   cache.set(ck, { t: Date.now(), v: out });
   return out;

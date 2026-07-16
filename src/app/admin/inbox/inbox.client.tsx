@@ -408,17 +408,31 @@ export function InboxClient({ userId }: { userId: string }) {
       .catch(() => setStock({ configured: true, products: [], error: 'query_error' }))
       .finally(() => setStockLoading(false));
   }, []);
-  // On opening the stock tab, auto-check the customer's ordered product. The
-  // warehouse view keys on SKU / product name (its item_id is a JST/ERP code, NOT
-  // the Shopee item_id), so we search by the ordered item's NAME — most reliable.
+  // The customer's ordered product names (cleaned, deduped) — quick-pick chips and
+  // the default stock check. Warehouse rows key on SKU/name (item_id is a JST code),
+  // so we always search by NAME.
+  const clean = (s: string) => (s || '').replace(/\[[^\]]*\]/g, '').replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim();
+  const orderStockNames = useMemo(() => {
+    const names = (buyerOrders?.list || []).flatMap((o: any) => o.items || []).map((it: any) => clean(it.item_name)).filter(Boolean);
+    return [...new Set(names)].slice(0, 6);
+  }, [buyerOrders]);
+
+  // On opening the stock tab with an empty box, default to the customer's first
+  // ordered product (checking their order first, as requested).
   useEffect(() => {
-    if (panelTab !== 'stock' || stock !== null) return;
-    const firstItem = (buyerOrders?.list || []).flatMap((o: any) => o.items || [])[0];
-    const name = (firstItem?.item_name || '').replace(/\[[^\]]*\]/g, '').replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim();
-    const q = name.split(' ').slice(0, 4).join(' ');
-    if (q.length >= 2) { setStockQ(q); searchStock({ q }); }
+    if (panelTab !== 'stock' || stockQ || stock !== null) return;
+    if (orderStockNames.length) setStockQ(orderStockNames[0].split(' ').slice(0, 4).join(' '));
     else setStock({ configured: true, products: [] });
-  }, [panelTab, stock, buyerOrders, searchStock]);
+  }, [panelTab, stockQ, stock, orderStockNames]);
+
+  // Live search — results update as you type (debounced), no button needed.
+  useEffect(() => {
+    if (panelTab !== 'stock') return;
+    const q = stockQ.trim();
+    if (q.length < 2) return;
+    const t = setTimeout(() => searchStock({ q }), 300);
+    return () => clearTimeout(t);
+  }, [stockQ, panelTab, searchStock]);
 
   // Draft bubbles ("ช่องๆ"): prefer the split blocks; fall back to the whole text.
   const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
@@ -1702,17 +1716,35 @@ export function InboxClient({ userId }: { userId: string }) {
 
             {panelTab === 'stock' && (
               <div className="p-4 space-y-2 text-xs">
-                <div className="flex items-center gap-1">
-                  <div className="relative flex-1">
-                    <Fi name="search" className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[13px]" />
-                    <input value={stockQ} onChange={e => setStockQ(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') searchStock({ q: stockQ }); }}
-                      placeholder="ค้นหา SKU / ชื่อสินค้า / item_id…" className="w-full border border-slate-200 rounded-lg pl-7 pr-2 py-1.5 text-[11px]" />
+                {/* Check the customer's ordered products first (quick-pick chips) */}
+                {orderStockNames.length > 0 && (
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-2 space-y-1">
+                    <div className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1"><Fi name="shopping-bag" className="text-[11px]" /> เช็กสต็อกจากออเดอร์ลูกค้า</div>
+                    <div className="flex flex-wrap gap-1">
+                      {orderStockNames.map((n, i) => {
+                        const short = n.split(' ').slice(0, 4).join(' ');
+                        const active = stockQ.trim() === short;
+                        return (
+                          <button key={i} onClick={() => setStockQ(short)} title={n}
+                            className={cn('px-2 py-1 rounded-md text-[10px] font-medium truncate max-w-[150px]',
+                              active ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100')}>
+                            {n}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <button onClick={() => searchStock({ q: stockQ })} className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white">ค้นหา</button>
+                )}
+                <div className="relative">
+                  <Fi name="search" className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[13px]" />
+                  <input value={stockQ} onChange={e => setStockQ(e.target.value)} autoComplete="off"
+                    placeholder="พิมพ์ชื่อสินค้า / SKU / แบรนด์ — ขึ้นผลทันที…" className="w-full border border-slate-200 rounded-lg pl-7 pr-8 py-1.5 text-[11px]" />
+                  {stockLoading
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
+                    : stockQ && <button onClick={() => { setStockQ(''); setStock({ configured: true, products: [] }); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500"><Fi name="cross-small" className="text-sm" /></button>}
                 </div>
                 <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                  <Fi name="boxes" className="text-[11px]" /> สต็อกคลังหลังบ้าน (JST · อัปเดตเป็นรอบ) — ไม่ใช่สต็อกหน้าร้าน Shopee แบบเรียลไทม์
+                  <Fi name="boxes" className="text-[11px]" /> สต็อกคลังหลังบ้าน (JST · อัปเดตเป็นรอบ · ชื่อเป็นอังกฤษ/SKU) — ไม่ใช่สต็อกหน้าร้าน Shopee เรียลไทม์
                 </div>
 
                 {stockLoading ? (
