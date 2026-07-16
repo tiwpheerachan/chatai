@@ -30,6 +30,11 @@ function deriveCondition(orders: BuyerOrder[]): string | null {
 const PRODUCT_HINTS = ['ราคา', 'กี่บาท', 'บาท', 'มีของ', 'มีไหม', 'พร้อมส่ง', 'สต็อก', 'สต๊อก', 'stock', 'รุ่น', 'สี', 'ไซส์', 'size', 'โปร', 'ส่วนลด', 'รับประกัน', 'แนะนำ', 'อยากได้', 'สนใจ', 'ซื้อ', 'ตัวไหน', 'อันไหน', 'ต่างกัน', 'เปรียบเทียบ', 'รุ่นไหน'];
 const ORDER_HINTS = /(ของ|พัสดุ|จัดส่ง|ส่ง|สถานะ|เลขพัสดุ|ถึงไหน|กี่วัน|ถึงยัง|เมื่อไหร่|ออเดอร์|คำสั่งซื้อ|order|track|ยกเลิก|คืนเงิน|คืนสินค้า|เคลม)/i;
 
+/** Strip "[TAG]"/"【TAG】" markers + collapse spaces from a Shopee product title. */
+function cleanProductName(s?: string | null): string {
+  return (s || '').replace(/\[[^\]]*\]/g, '').replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim();
+}
+
 const SYSTEM_PROMPT_DEFAULT = `คุณคือ Aria — ผู้ช่วยลูกค้าของร้านค้าออนไลน์ พูดสุภาพ เป็นกันเอง ลงท้ายด้วย "ค่ะ" หรือ "ครับ" ตามที่เหมาะสม
 - ตอบสั้น กระชับ ตรงประเด็น ไม่ใช้คำฟุ่มเฟือย
 - หากมีข้อมูลจาก Knowledge Base ให้ใช้ข้อมูลนั้นเป็นหลัก
@@ -299,16 +304,23 @@ export async function draftReply(opts: {
 
   const productish = PRODUCT_HINTS.some(k => topicText.toLowerCase().includes(k));
   const orderIsh = ORDER_HINTS.test(topicText);
+  const howish = HOWTO_RE.test(topicText);
+  // Capability / spec question ("โทรได้ไหม", "กันน้ำไหม", "แบตกี่วัน", "รองรับ…") —
+  // these carry no product keyword but STILL need the ordered product for context.
+  const SPEC_RE = /ไหม|มั้ย|รองรับ|ใช้กับ|ใช้ได้|กันน้ำ|กันฝุ่น|กันเหงื่อ|แบต|กี่วัน|กี่ชม|กี่ชั่วโมง|โทร|รับสาย|เชื่อมต่อ|บลูทูธ|bluetooth|wi-?fi|เมนู|ภาษาไทย|น้ำหนัก|ขนาด|สเปก|spec|ฟังก์ชัน|feature|ทำอะไรได้|\?/i;
+  const specish = SPEC_RE.test(topicText);
+  const validBuyer = !!(shopId && buyerUsername && buyerUsername !== 'Shopee Buyer');
   // Gather every source concurrently (incl. "reading" the images) so the draft stays fast.
-  const [examples, docs, scenarios, orders, products, referencedProducts, visionDesc] = await Promise.all([
+  const [examples, docs0, scenarios, orders, products0, referencedProducts, visionDesc] = await Promise.all([
     getAdminStyleExamples(sb, brand_id),
     retrieve(topicText, { brand_id, k: 3 }),
     getPlaybook(sb, brand_id).catch(() => [] as PlaybookScenario[]),
-    // Pull the buyer's REAL orders — but ONLY for order/shipping questions. buyer-orders
-    // is a ~4.5s upstream call, so skipping it for general/product questions makes those
-    // drafts fast (~1–2s); order questions still get the real data (worth the wait).
-    (orderIsh && shopId && buyerUsername && buyerUsername !== 'Shopee Buyer'
-      ? getBuyerOrders(shopId, buyerUsername, { limit: 5 }).catch(() => [] as BuyerOrder[])
+    // Pull the buyer's REAL orders for ANY order / product / how-to question — the
+    // customer already has an order, so we should answer about THAT product instead
+    // of asking "which model?". (buyer-orders is a ~4.5s call, so we still skip it
+    // for pure greetings/chitchat to keep those drafts fast.)
+    ((orderIsh || productish || howish || specish) && validBuyer
+      ? getBuyerOrders(shopId!, buyerUsername!, { limit: 5 }).catch(() => [] as BuyerOrder[])
       : Promise.resolve([] as BuyerOrder[])),
     // For product questions, search the catalog so the draft can give price/stock.
     (productish && shopId ? searchProducts(shopId, { q: topicText.slice(0, 40), limit: 4 }).catch(() => []) : Promise.resolve([])),
@@ -317,6 +329,29 @@ export async function draftReply(opts: {
     // "Read" any images the customer sent (vision model if available).
     (images.length ? describeImages(images).catch(() => null) : Promise.resolve(null)),
   ]);
+
+  // ---- Ground the answer in the customer's ACTUAL ordered product ----
+  // If they have an order and are asking about a product / how-to WITHOUT naming a
+  // model, look up that exact product's specs (catalog + KB) so the draft answers
+  // the right model instead of asking the customer to send it.
+  let products = products0 as any[];
+  let docs = docs0;
+  const orderedName = orders[0]?.items?.[0]?.item_name
+    ? cleanProductName(orders[0].items[0].item_name)
+    : '';
+  const needsOrderGrounding = orders.length > 0 && (productish || howish || specish) && !referencedProducts.length && !!orderedName;
+  if (needsOrderGrounding) {
+    const q = orderedName.split(' ').slice(0, 4).join(' ');
+    const [extraProducts, extraDocs] = await Promise.all([
+      shopId ? searchProducts(shopId, { q, limit: 3 }).catch(() => []) : Promise.resolve([]),
+      retrieve(orderedName, { brand_id, k: 2 }).catch(() => [] as typeof docs0),
+    ]);
+    // Merge, de-duping products by item_id/name and docs by title.
+    const seenP = new Set(products.map((p: any) => p.item_id ?? p.item_name));
+    for (const p of extraProducts as any[]) { const k = p.item_id ?? p.item_name; if (!seenP.has(k)) { seenP.add(k); products.push(p); } }
+    const seenD = new Set(docs.map((d: any) => d.title));
+    for (const d of extraDocs as any[]) { if (!seenD.has(d.title)) { seenD.add(d.title); docs.push(d); } }
+  }
 
   const visionBlock = !images.length ? '' : visionDesc
     ? `\n\n=== รูปที่ลูกค้าส่งมา (ระบบอ่านให้) ===\n${visionDesc}`
@@ -386,9 +421,10 @@ export async function draftReply(opts: {
 เนื้อหา:
 - พยายามตอบให้ได้เองก่อนเสมอ โดยใช้ข้อมูลจริงด้านล่าง (ออเดอร์ลูกค้า/สินค้า/สคริปต์ร้าน/คลังความรู้) อย่ารีบโยนให้พนักงาน
 - ถามสถานะ/จัดส่ง/ของที่สั่ง → ดู "ออเดอร์จริงของลูกค้า" · ถามราคา/สต็อก/รุ่น → ดู "สินค้าในร้าน" · มี "สคริปต์ร้าน" → ยึดตามนั้น (เลือกให้ตรงสถานะออเดอร์)
+- **ถ้ามี "ออเดอร์จริงของลูกค้า" อยู่ และลูกค้าถามเรื่องสินค้า/วิธีใช้/สเปก โดยไม่ได้บอกรุ่น → ให้ถือว่าลูกค้าหมายถึง "สินค้าที่อยู่ในออเดอร์ของเขา" ระบุชื่อรุ่นจากออเดอร์นั้นได้เลย ห้ามถามลูกค้าว่า "รุ่นไหน/แคปหน้าสินค้ามา" ทั้งที่ดูจากออเดอร์รู้อยู่แล้ว** (ลูกค้าซื้อไปแล้ว การถามซ้ำทำให้ดูไม่ฉลาด) — ถ้ามีหลายออเดอร์/หลายรุ่น ค่อยถามว่าหมายถึงรุ่นไหนในออเดอร์ของเขา
 - ห้ามแต่งตัวเลข/ราคา/โปร/สถานะที่ไม่มีในข้อมูล
 - **ห้ามเดา/ยืนยันสเปกหรือความสามารถของสินค้าเด็ดขาด** (เช่น "โทรได้ไหม" "กันน้ำไหม" "แบตกี่วัน" "รองรับ...ไหม" "ใช้กับ...ได้ไหม" "มีสี/ไซซ์ไหน") ถ้าไม่มีข้อมูลยืนยันจาก "สินค้าในร้าน"/"สินค้าที่ลูกค้าอ้างถึง"/"คลังความรู้" — ห้ามตอบว่าได้/ไม่ได้ลอยๆ ให้ตอบแบบ "ขอเช็กสเปกรุ่นนี้ให้แป๊บนึงนะคะ" หรือถามยืนยันรุ่น/ชื่อสินค้าก่อน (ตอบผิดเรื่องสเปกอันตรายมาก เช่น Smart Band ที่โทรไม่ได้ ห้ามบอกว่าโทรได้)
-- ให้ดูชื่อรุ่นจริงของสินค้าที่ลูกค้าถาม/ส่งการ์ดมาก่อนเสมอ (เช่น เห็นว่าเป็น "Smart Band" ก็รู้ว่าไม่รองรับการโทร) ถ้าไม่รู้ว่าเป็นรุ่นไหนจริงๆ ให้ถามยืนยันรุ่นก่อนตอบเรื่องความสามารถ
+- ให้ดูชื่อรุ่นจริงของสินค้าที่ลูกค้าถาม/ส่งการ์ด/**มีอยู่ในออเดอร์ของลูกค้า**ก่อนเสมอ (เช่น เห็นว่าเป็น "Smart Band" ก็รู้ว่าไม่รองรับการโทร) — ลำดับการหารุ่น: (1) สินค้าที่ลูกค้าส่งการ์ด (2) ออเดอร์จริงของลูกค้า (3) รูปที่ส่งมา แล้วค่อยตอบตามรุ่นนั้น ถ้าหาจากทั้ง 3 แหล่งแล้วยังไม่รู้จริงๆ จึงถามยืนยันรุ่นก่อนตอบเรื่องความสามารถ (อย่าเพิ่งถ้ามีออเดอร์อยู่แล้ว)
 - ตั้ง needs_human=true เฉพาะเมื่อไม่มีข้อมูลช่วยได้เลย หรือเป็นเรื่องต้องตัดสินใจแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม)
 - ตอบภาษาเดียวกับลูกค้า
 - ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ
