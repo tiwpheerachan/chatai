@@ -40,7 +40,9 @@ export interface StockProduct {
   item_id: string | null;
   sku: string | null;
   sku_name: string | null;
+  name: string | null;      // best human-readable name (see bestName)
   brand: string | null;
+  barcode: string | null;
   picture_url: string | null;
   available: number;   // sum available_stock across warehouses
   actual: number;      // sum actual_stock across warehouses
@@ -48,6 +50,18 @@ export interface StockProduct {
   in_stock: boolean;
   warehouses: WarehouseRow[];
   refreshed_at: string | null;
+}
+
+// The view has several name columns of uneven quality:
+//   sku            = clean readable name  ("Dreame-AirStylePro Hi-Pink")   ← best
+//   sku_name       = model-code + name    ("AMS01ADreame-AirStylePro Hi…") / or a bare number
+//   sku_short_name = Chinese name
+// Prefer `sku` when it looks like a name (has ≥2 letters); else fall back.
+function bestName(sku: string | null, sku_name: string | null): string | null {
+  const looksName = (s: string | null) => !!s && /[A-Za-z].*[A-Za-z]/.test(s);
+  if (looksName(sku)) return sku;
+  if (looksName(sku_name)) return sku_name;
+  return sku || sku_name || null;
 }
 
 const num = (v: unknown): number => {
@@ -94,7 +108,7 @@ export async function getStock(opts: StockQuery): Promise<StockProduct[]> {
 
   const scoreExpr = score.length ? score.join(' + ') : '0';
   const sql = `
-    SELECT warehouse_name, company_name, sku, sku_name, item_id, brand, picture_url,
+    SELECT warehouse_name, company_name, sku, sku_name, item_id, brand, barcode, picture_url,
            actual_stock, available_stock, sales_30d, refreshed_at, (${scoreExpr}) AS _score
     FROM ${VIEW}
     WHERE ${where.join(' OR ')}
@@ -117,7 +131,9 @@ export async function getStock(opts: StockQuery): Promise<StockProduct[]> {
     let p = byKey.get(key);
     if (!p) {
       p = {
-        key, item_id: itemId, sku, sku_name: r.sku_name ?? null, brand: r.brand ?? null,
+        key, item_id: itemId, sku, sku_name: r.sku_name ?? null,
+        name: bestName(sku, r.sku_name ?? null), brand: r.brand ?? null,
+        barcode: r.barcode != null ? String(r.barcode) : null,
         picture_url: r.picture_url ?? null, available: 0, actual: 0, sales_30d: 0,
         in_stock: false, warehouses: [], refreshed_at: null,
       };

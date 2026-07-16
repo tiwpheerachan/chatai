@@ -1766,14 +1766,15 @@ export function InboxClient({ userId }: { userId: string }) {
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {p.picture_url ? <button type="button" onClick={() => setLightbox(p.picture_url)} className="shrink-0 cursor-zoom-in"><img src={p.picture_url} alt="" className="w-10 h-10 rounded object-cover" /></button> : <div className="w-10 h-10 rounded bg-slate-100 shrink-0 flex items-center justify-center"><Fi name="boxes" className="text-slate-300" /></div>}
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] text-slate-800 line-clamp-2 leading-tight">{p.sku_name || p.sku || p.item_id}</div>
+                            <div className="text-[11px] font-medium text-slate-800 line-clamp-2 leading-tight">{p.name || p.sku || p.item_id}</div>
                             <div className="flex items-center gap-1.5 text-[10px] mt-0.5 flex-wrap">
-                              {p.sku && <span className="font-mono text-slate-400">{p.sku}</span>}
                               <span className={cn('rounded px-1.5 py-0.5 font-semibold', p.in_stock ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>
                                 {p.in_stock ? `คงเหลือ ${p.available.toLocaleString()} ชิ้น` : 'หมดสต็อก'}
                               </span>
-                              {p.sales_30d > 0 && <span className="text-slate-400">ขาย 30 วัน {p.sales_30d.toLocaleString()} ชิ้น</span>}
+                              {p.brand && <span className="text-slate-400">{p.brand}</span>}
+                              {p.sales_30d > 0 && <span className="text-slate-400">· ขาย 30 วัน {p.sales_30d.toLocaleString()}</span>}
                             </div>
+                            {p.barcode && <div className="text-[9px] text-slate-400 font-mono mt-0.5">บาร์โค้ด {p.barcode}</div>}
                           </div>
                         </div>
                         {p.warehouses?.length > 0 && (
