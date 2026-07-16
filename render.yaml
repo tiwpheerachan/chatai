@@ -54,6 +54,11 @@ services:
       # search as the fallback. Without it, only KB links are offered (no guessing).
       - key: YOUTUBE_API_KEY
         sync: false          # ← paste a YouTube Data API v3 key in the Render dashboard (not committed)
+      # ---- Warehouse stock (#6) — BigQuery Canonical.warehouse_inventory_current ----
+      # Paste the FULL sa-consumer-sigmacha.json (single line) as the value. Read-only
+      # SA; the app queries with maximumBytesBilled + 10-min cache. Never commit the key.
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
       # ---- Comment-reply feature (Shopee review comments) ----
       # Reads comments from the shopee-comment-ai Supabase project:
       - key: COMMENTS_SUPABASE_URL

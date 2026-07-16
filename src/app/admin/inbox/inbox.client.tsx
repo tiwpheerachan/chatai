@@ -146,9 +146,13 @@ export function InboxClient({ userId }: { userId: string }) {
   const [pickQ, setPickQ] = useState(false);            // show the multi-question picker
   // Right customer panel: resizable width + tabbed sections (Chat++ style).
   const [panelW, setPanelW] = useState(360);
-  const [panelTab, setPanelTab] = useState<'draft' | 'insight' | 'info' | 'orders' | 'products' | 'tasks' | 'coupon'>('draft');
+  const [panelTab, setPanelTab] = useState<'draft' | 'insight' | 'info' | 'orders' | 'products' | 'stock' | 'tasks' | 'coupon'>('draft');
   const [insight, setInsight] = useState<any | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
+  // #6 Warehouse stock lookup (BigQuery-backed).
+  const [stockQ, setStockQ] = useState('');
+  const [stock, setStock] = useState<{ configured: boolean; products: any[]; error?: string; detail?: string } | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
   const panelWRef = useRef(360);
   const [listW, setListW] = useState(320);
   const listWRef = useRef(320);
@@ -291,7 +295,7 @@ export function InboxClient({ userId }: { userId: string }) {
   useEffect(() => {
     if (!activeId) { setBuyerOrders(null); setTasks([]); setRecProds(null); return; }
     const id = activeId;
-    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false); setSentBlocks([]); setCopiedBlock(null); setInsight(null);
+    setProdQ(''); setTasks([]); setAssignOpen(false); setPanelProdQ(''); setAiDraft(null); setDraftCopied(false); setSelQ([]); setPickQ(false); setSentBlocks([]); setCopiedBlock(null); setInsight(null); setStock(null); setStockQ('');
     // Restore cached panel data instantly (orders/products/vouchers); only fetch
     // what isn't cached. Orders (buyer-orders) is a ~4–5s BigQuery-backed upstream,
     // so caching makes every re-open instant.
@@ -391,6 +395,26 @@ export function InboxClient({ userId }: { userId: string }) {
     if (!activeId || panelTab !== 'insight' || insight) return;
     fetchInsight();
   }, [panelTab, activeId, insight, fetchInsight]);
+
+  // #6 Warehouse stock — search by SKU/name/item_id, or by the customer's order items.
+  const searchStock = useCallback((opts: { q?: string; itemIds?: (string | number)[] }) => {
+    const params = new URLSearchParams();
+    if (opts.q?.trim()) params.set('q', opts.q.trim());
+    if (opts.itemIds?.length) params.set('item_ids', [...new Set(opts.itemIds.map(String))].join(','));
+    if (![...params.keys()].length) { setStock({ configured: true, products: [] }); return; }
+    setStockLoading(true);
+    fetch(`/api/stock?${params.toString()}`).then(r => (r.ok ? r.json() : null))
+      .then(d => setStock(d || { configured: true, products: [], error: 'query_error' }))
+      .catch(() => setStock({ configured: true, products: [], error: 'query_error' }))
+      .finally(() => setStockLoading(false));
+  }, []);
+  // On opening the stock tab, auto-check the customer's ordered items (if any).
+  useEffect(() => {
+    if (panelTab !== 'stock' || stock !== null) return;
+    const ids = (buyerOrders?.list || []).flatMap((o: any) => (o.items || []).map((it: any) => it.item_id).filter(Boolean));
+    if (ids.length) searchStock({ itemIds: ids });
+    else setStock({ configured: true, products: [] });
+  }, [panelTab, stock, buyerOrders, searchStock]);
 
   // Draft bubbles ("ช่องๆ"): prefer the split blocks; fall back to the whole text.
   const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
@@ -1251,6 +1275,7 @@ export function InboxClient({ userId }: { userId: string }) {
               { key: 'info', label: 'ข้อมูล', icon: 'user', badge: 0 },
               { key: 'orders', label: 'ออเดอร์', icon: 'shopping-bag', badge: buyerOrders?.list.length || 0 },
               { key: 'products', label: 'สินค้า', icon: 'box-open', badge: 0 },
+              { key: 'stock', label: 'สต็อกคลัง', icon: 'boxes', badge: 0 },
               { key: 'tasks', label: 'งาน', icon: 'list-check', badge: tasks.filter((t: any) => !t.done).length },
               { key: 'coupon', label: 'คูปอง', icon: 'ticket', badge: 0 },
             ] as const).map(t => (
@@ -1667,6 +1692,75 @@ export function InboxClient({ userId }: { userId: string }) {
                   </div>
                 ) : (
                   <div className="text-[11px] text-slate-400">{panelProdQ.trim() ? 'ไม่พบสินค้าตามคำค้น' : 'ไม่มีข้อมูลสินค้าสำหรับร้านนี้'}</div>
+                )}
+              </div>
+            )}
+
+            {panelTab === 'stock' && (
+              <div className="p-4 space-y-2 text-xs">
+                <div className="flex items-center gap-1">
+                  <div className="relative flex-1">
+                    <Fi name="search" className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[13px]" />
+                    <input value={stockQ} onChange={e => setStockQ(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') searchStock({ q: stockQ }); }}
+                      placeholder="ค้นหา SKU / ชื่อสินค้า / item_id…" className="w-full border border-slate-200 rounded-lg pl-7 pr-2 py-1.5 text-[11px]" />
+                  </div>
+                  <button onClick={() => searchStock({ q: stockQ })} className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white">ค้นหา</button>
+                </div>
+                <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                  <Fi name="boxes" className="text-[11px]" /> สต็อกคลังหลังบ้าน (JST · อัปเดตเป็นรอบ) — ไม่ใช่สต็อกหน้าร้าน Shopee แบบเรียลไทม์
+                </div>
+
+                {stockLoading ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 py-3"><Loader2 className="w-3.5 h-3.5 animate-spin" /> กำลังเช็กสต็อก…</div>
+                ) : stock?.configured === false ? (
+                  <div className="text-[11px] text-slate-400 py-2">ยังไม่ได้ตั้งค่าการเชื่อมต่อคลัง (GOOGLE_APPLICATION_CREDENTIALS_JSON)</div>
+                ) : stock?.error === 'access_denied' ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800 space-y-1">
+                    <div className="font-semibold flex items-center gap-1"><Fi name="lock" className="text-[11px]" /> ยังเข้าถึงข้อมูลคลังไม่ได้</div>
+                    <div className="text-amber-700 leading-snug">Service account ยังไม่ได้รับสิทธิ์อ่าน dataset ที่อยู่เบื้องหลัง view (JST/Config) — ต้องให้ทีม platform เปิด authorized-view ให้ก่อน ระบบจะแสดงผลเองทันทีเมื่อเปิดสิทธิ์แล้ว</div>
+                  </div>
+                ) : stock?.error ? (
+                  <div className="text-[11px] text-rose-500 py-2">ดึงข้อมูลสต็อกไม่สำเร็จ ลองใหม่อีกครั้ง</div>
+                ) : stock && stock.products.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {stock.products.map((p: any) => (
+                      <div key={p.key} className="rounded-lg border border-slate-200 px-2 py-2">
+                        <div className="flex items-start gap-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {p.picture_url ? <button type="button" onClick={() => setLightbox(p.picture_url)} className="shrink-0 cursor-zoom-in"><img src={p.picture_url} alt="" className="w-10 h-10 rounded object-cover" /></button> : <div className="w-10 h-10 rounded bg-slate-100 shrink-0 flex items-center justify-center"><Fi name="boxes" className="text-slate-300" /></div>}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] text-slate-800 line-clamp-2 leading-tight">{p.sku_name || p.sku || p.item_id}</div>
+                            <div className="flex items-center gap-1.5 text-[10px] mt-0.5 flex-wrap">
+                              {p.sku && <span className="font-mono text-slate-400">{p.sku}</span>}
+                              <span className={cn('rounded px-1.5 py-0.5 font-semibold', p.in_stock ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')}>
+                                {p.in_stock ? `คงเหลือ ${p.available.toLocaleString()} ชิ้น` : 'หมดสต็อก'}
+                              </span>
+                              {p.sales_30d > 0 && <span className="text-slate-400">ขาย 30 วัน {p.sales_30d.toLocaleString()} ชิ้น</span>}
+                            </div>
+                          </div>
+                        </div>
+                        {p.warehouses?.length > 0 && (
+                          <div className="mt-1.5 pl-12 grid grid-cols-2 gap-x-2 gap-y-0.5">
+                            {p.warehouses.slice(0, 8).map((w: any, i: number) => (
+                              <div key={i} className="flex justify-between gap-1 text-[10px]">
+                                <span className="text-slate-500 truncate">{w.warehouse_name}</span>
+                                <span className={cn('font-medium shrink-0', w.available > 0 ? 'text-slate-700' : 'text-slate-300')}>{w.available.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {p.refreshed_at && (
+                          <div className="mt-1 pl-12 text-[9px] text-slate-400">ข้อมูล ณ {new Date(p.refreshed_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 py-2">
+                    {stockQ.trim() ? 'ไม่พบสต็อกตามคำค้น' : 'พิมพ์ SKU / ชื่อสินค้า เพื่อเช็กสต็อกคลัง'}
+                    {buyerOrders?.list?.length ? '' : ''}
+                  </div>
                 )}
               </div>
             )}
