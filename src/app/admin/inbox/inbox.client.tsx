@@ -9,6 +9,8 @@ import { Fi } from '@/components/ui/fi';
 import { AnimatedChat, AnimatedInbox, AnimatedAI, AnimatedRobot } from '@/components/ui/animated-icons';
 import { Bot, Loader2 } from 'lucide-react';
 import type { Conversation, Message, MessageAttachment, Macro } from '@/types/database';
+import { detectRiskIn } from '@/lib/risk';
+import { productMismatch } from '@/lib/product-guard';
 
 const BRANDS = [
   '70mai', 'Anker', 'DDpai', 'Dreame', 'Jimmy', 'Levoit', 'Mibro', 'Mova', 'Soundcore',
@@ -503,6 +505,7 @@ export function InboxClient({ userId }: { userId: string }) {
     if (filter === 'unread') base = convos.filter(c => c.unread > 0);
     else if (filter === 'mine') base = convos.filter(c => c.assigned_to === userId);
     else if (filter === 'ai') base = convos.filter(c => c.ai_handling);
+    else if (filter === 'risk') base = convos.filter(c => (c as any).risk);
     else if (filter !== 'all') base = convos.filter(c => c.channel === filter);
     // Brand filter — matches the DB-joined brand name (populated for synced Shopee convos).
     if (brandSel.length) base = base.filter(c => { const b = c.brand_name; return !!b && brandSel.includes(b); });
@@ -514,6 +517,23 @@ export function InboxClient({ userId }: { userId: string }) {
       (c.brand_name || '').toLowerCase().includes(q));
     return base;
   }, [convos, filter, userId, brandSel, search]);
+
+  // #9 Risk-word detection — scan ALL customer messages in the open thread (not
+  // just the preview), so a red banner warns the whole team before they reply.
+  const activeRisk = useMemo(() => {
+    const msgs = (active?.messages || []) as any[];
+    return detectRiskIn(msgs.filter(m => m.sender_type === 'customer').map(m => m.text));
+  }, [active]);
+  const [riskDismissed, setRiskDismissed] = useState<string | null>(null);
+
+  // #13 Wrong-product guard — compare the product family in the composer draft
+  // against what the customer actually ordered. Soft, dismissible, never blocks.
+  const productWarn = useMemo(
+    () => productMismatch(noteMode ? '' : draft, buyerOrders?.list),
+    [draft, buyerOrders, noteMode],
+  );
+  const [prodWarnDismissed, setProdWarnDismissed] = useState(false);
+  useEffect(() => { setProdWarnDismissed(false); }, [activeId]);
 
   useEffect(() => {
     if (!activeId && filtered.length) openConvo(filtered[0]);
@@ -696,11 +716,13 @@ export function InboxClient({ userId }: { userId: string }) {
     loadConvos();
   };
 
+  const riskCount = convos.filter(c => (c as any).risk).length;
   const filterTabs = [
     { id: 'all',    label: 'ทั้งหมด',    count: convos.length },
     { id: 'unread', label: 'ยังไม่อ่าน', count: convos.filter(c => c.unread > 0).length },
     { id: 'mine',   label: 'ของฉัน',     count: convos.filter(c => c.assigned_to === userId).length },
     { id: 'ai',     label: 'AI ดูแล',    count: convos.filter(c => c.ai_handling).length },
+    ...(riskCount ? [{ id: 'risk', label: '⚠️ เคสเสี่ยง', count: riskCount }] : []),
   ];
 
   const channelApps = PLATFORM_CHANNELS.map(k => ({ id: k, name: CHANNEL_META[k]?.name || k, icon: `/channels/${k}.png` }));
@@ -825,6 +847,12 @@ export function InboxClient({ userId }: { userId: string }) {
                     </div>
                     <div className="flex items-center gap-1 mt-1">
                       <BrandChip name={c.brand_name} color={c.brand_color} size="xs" />
+                      {(c as any).risk && (
+                        <span title={`คำเสี่ยง: ${(c as any).risk.terms.join(', ')}`}
+                          className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-rose-600 text-white font-bold animate-pulse">
+                          <Fi name="triangle-warning" className="text-[9px]" /> เสี่ยง
+                        </span>
+                      )}
                       {c.priority === 'high' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วน</span>}
                       {c.priority === 'urgent' && <span className="text-[9px] px-1 rounded bg-red-100 text-red-700 font-semibold">ด่วนมาก</span>}
                       {c.ai_handling && <span className="inline-flex items-center gap-0.5 text-[9px] px-1 rounded bg-violet-100 text-violet-700 font-semibold"><Bot className="w-2.5 h-2.5" /> AI</span>}
@@ -901,6 +929,29 @@ export function InboxClient({ userId }: { userId: string }) {
                 </button>
               </div>
             </div>
+
+            {activeRisk && riskDismissed !== activeId && (
+              <div className={cn('px-5 py-2.5 flex items-start gap-2.5 border-b',
+                activeRisk.severity === 'high' ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200')}>
+                <Fi name="triangle-warning" className={cn('text-lg mt-0.5 shrink-0', activeRisk.severity === 'high' ? 'text-rose-600' : 'text-amber-600')} />
+                <div className="flex-1 min-w-0">
+                  <div className={cn('text-xs font-bold', activeRisk.severity === 'high' ? 'text-rose-800' : 'text-amber-800')}>
+                    เคสเสี่ยง — พบคำ: {activeRisk.terms.join(' · ')}
+                  </div>
+                  <div className={cn('text-[11px] mt-0.5', activeRisk.severity === 'high' ? 'text-rose-700' : 'text-amber-700')}>
+                    โปรดตอบอย่างระมัดระวังและแจ้งหัวหน้าทีมทันที ห้ามให้สัญญาที่อาจมีผลทางกฎหมาย
+                  </div>
+                </div>
+                <button onClick={() => { setNoteMode(true); setDraft(`⚠️ เคสเสี่ยง (${activeRisk.terms.join(', ')}) — ส่งต่อหัวหน้าทีม `); }}
+                  className={cn('shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white', activeRisk.severity === 'high' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-600 hover:bg-amber-700')}>
+                  แจ้งทีม (โน้ต)
+                </button>
+                <button onClick={() => setRiskDismissed(activeId)} title="ซ่อนแถบนี้"
+                  className={cn('shrink-0 p-1 rounded-md', activeRisk.severity === 'high' ? 'text-rose-400 hover:bg-rose-100' : 'text-amber-400 hover:bg-amber-100')}>
+                  <Fi name="cross-small" className="text-sm" />
+                </button>
+              </div>
+            )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin px-6 py-4 space-y-3">
               {hydrating && (
@@ -1036,6 +1087,21 @@ export function InboxClient({ userId }: { userId: string }) {
                   ) : (
                     <div className="text-[10px] text-slate-400">แคตตาล็อกอัปเดตรายวัน · สต็อกเป็นค่าประมาณ · กดสินค้าเพื่อส่งการ์ดให้ลูกค้า</div>
                   )}
+                </div>
+              )}
+              {productWarn && !prodWarnDismissed && (
+                <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2">
+                  <Fi name="triangle-warning" className="text-rose-600 text-base mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0 text-[11px] leading-snug">
+                    <span className="font-bold text-rose-800">ตรวจสอบสินค้าก่อนส่ง:</span>{' '}
+                    <span className="text-rose-700">
+                      คำตอบพูดถึง <b className="uppercase">{productWarn.said.join(', ')}</b> แต่ลูกค้าสั่ง{' '}
+                      <b className="uppercase">{productWarn.ordered.join(', ')}</b> — แน่ใจว่าตอบถูกรุ่น?
+                    </span>
+                  </div>
+                  <button onClick={() => setProdWarnDismissed(true)} className="shrink-0 p-0.5 rounded text-rose-400 hover:bg-rose-100" title="รับทราบ">
+                    <Fi name="cross-small" className="text-sm" />
+                  </button>
                 </div>
               )}
               <div className="px-3 pt-3 pb-8 flex items-end gap-2 relative">

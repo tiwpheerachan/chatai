@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clampInt, safeUuid } from '@/lib/validation';
+import { detectRisk } from '@/lib/risk';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,15 +40,20 @@ export async function GET(req: Request) {
   if (error) ({ data, error } = await build(false)); // pinned column not there yet → fall back
   if (error) return NextResponse.json({ error: 'Query failed' }, { status: 500 });
 
-  // flatten customer + brand for the inbox list
-  const flat = (data || []).map((c: any) => ({
-    ...c,
-    customer_name: c.customer?.display_name,
-    customer_avatar: c.customer?.avatar,
-    brand_name: c.brand?.name ?? null,
-    brand_slug: c.brand?.slug ?? null,
-    brand_color: c.brand?.color ?? null,
-    assignee_name: c.assignee?.name ?? null,
-  }));
+  // flatten customer + brand for the inbox list. `risk` is a team-wide at-a-glance
+  // flag from the latest-message preview (full-thread scan happens on open).
+  const flat = (data || []).map((c: any) => {
+    const rk = detectRisk(c.last_snippet);
+    return {
+      ...c,
+      customer_name: c.customer?.display_name,
+      customer_avatar: c.customer?.avatar,
+      brand_name: c.brand?.name ?? null,
+      brand_slug: c.brand?.slug ?? null,
+      brand_color: c.brand?.color ?? null,
+      assignee_name: c.assignee?.name ?? null,
+      risk: rk ? { severity: rk.severity, terms: rk.terms } : null,
+    };
+  });
   return NextResponse.json(flat);
 }
