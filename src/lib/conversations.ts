@@ -69,6 +69,7 @@ export async function getOrCreateConversation(opts: {
       channel: opts.channel,
       brand_id: opts.brand_id || null,
       sla_due_at: slaDue,
+      ai_handling: false,   // human-first: no AI auto-reply until a person turns it on
     })
     .select('id')
     .single();

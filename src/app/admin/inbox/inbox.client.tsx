@@ -6,7 +6,7 @@ import { CHANNEL_META, PLATFORM_CHANNELS, brandIcon, cn } from '@/lib/utils';
 import { ChannelIcon } from '@/components/ui/channel-icon';
 import { Avatar } from '@/components/ui/avatar';
 import { Fi } from '@/components/ui/fi';
-import { AnimatedChat, AnimatedInbox, AnimatedAI, AnimatedRobot } from '@/components/ui/animated-icons';
+import { AnimatedChat, AnimatedInbox, AnimatedAI } from '@/components/ui/animated-icons';
 import { Bot, Loader2 } from 'lucide-react';
 import type { Conversation, Message, MessageAttachment, Macro } from '@/types/database';
 import { detectRiskIn } from '@/lib/risk';
@@ -702,14 +702,6 @@ export function InboxClient({ userId }: { userId: string }) {
     if (data.text) setDraft(data.text);
   };
 
-  const aiSendNow = async () => {
-    if (!active || sending) return;
-    setSending(true);
-    try {
-      await fetch(`/api/conversations/${active.id}/send-ai`, { method: 'POST' });
-    } finally { setSending(false); }
-  };
-
   const close = async () => {
     if (!active || !confirm('ปิดเคสนี้?')) return;
     await fetch(`/api/conversations/${active.id}/close`, { method: 'POST' });
@@ -1014,9 +1006,7 @@ export function InboxClient({ userId }: { userId: string }) {
                     <button onClick={aiSuggest} className="px-2.5 py-1 rounded-md bg-violet-100 text-violet-700 hover:bg-violet-200 flex items-center gap-1.5 font-medium">
                       <AnimatedAI size={18} />AI Suggest
                     </button>
-                    <button onClick={aiSendNow} className="px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 flex items-center gap-1.5 font-medium">
-                      <AnimatedRobot size={18} />AI ตอบเอง
-                    </button>
+                    <span className="text-[10px] text-slate-400">แอดมินตรวจก่อนส่งเสมอ · ไม่มี AI ตอบอัตโนมัติ</span>
                   </>
                 )}
                 <span className="text-slate-400">|</span>

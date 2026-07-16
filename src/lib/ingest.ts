@@ -40,7 +40,13 @@ export async function ingest(input: IngestInput): Promise<{ conversationId: stri
     .eq('id', conversationId)
     .single();
 
-  if (conv?.ai_handling) {
+  // GLOBAL KILL-SWITCH: never auto-generate/auto-send an AI reply to a real
+  // customer unless AI_AUTOREPLY_ENABLED is explicitly "true". Default OFF —
+  // Nexus is human-reply-only (drafts are copy/send by a person). This guards
+  // the webhook path even for legacy conversations whose ai_handling is true.
+  const autoReplyOn = process.env.AI_AUTOREPLY_ENABLED === 'true';
+
+  if (autoReplyOn && conv?.ai_handling) {
     const { data: history } = await sb
       .from('messages')
       .select('*')

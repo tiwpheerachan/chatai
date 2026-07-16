@@ -29,6 +29,11 @@ services:
       # Shared secret for the scheduled sync endpoint (/api/cron/sync)
       - key: CRON_SECRET
         sync: false
+      # GLOBAL KILL-SWITCH for AI auto-reply to real customers. Default OFF:
+      # Nexus is human-reply-only (AI only drafts; a person reviews + sends).
+      # Set to "true" ONLY if you ever want webhook channels to auto-respond.
+      - key: AI_AUTOREPLY_ENABLED
+        value: "false"
       - key: LLM_PROVIDER
         value: deepseek      # deepseek | openai | anthropic | mock (auto-detects a set key if mock)
       - key: LLM_MODEL

@@ -14,6 +14,12 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
   if (!ctx) return res;
   if (!safeUuid(params.id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
+  // Kill-switch: AI must never send to a real customer without human review while
+  // AI_AUTOREPLY_ENABLED !== "true". Use /ai-reply (fills the composer) instead.
+  if (process.env.AI_AUTOREPLY_ENABLED !== 'true') {
+    return NextResponse.json({ error: 'AI auto-send is disabled — use AI Suggest and send manually.' }, { status: 403 });
+  }
+
   const limited = enforceRateLimit(`send-ai:${ctx.userId}`, 30, 60_000);
   if (limited) return limited;
   const { sb } = ctx;
