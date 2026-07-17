@@ -29,6 +29,13 @@ export function isOwnedMediaUrl(url: string): boolean {
 const TOK = /[^\p{L}\p{N}\p{M}]+/u;
 const toTokens = (s: string, min = 2) => [...new Set((s || '').toLowerCase().split(TOK).map(t => t.trim()).filter(t => t.length >= min))];
 
+// Character-bigram overlap (Dice) — language-agnostic, so it matches Thai even
+// when the query has NO word spaces (Thai has no segmentation). Same approach the
+// KB retriever uses.
+const bgNorm = (s: string) => (s || '').toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+const bigrams = (s: string) => { const g = new Set<string>(); for (let i = 0; i < s.length - 1; i++) g.add(s.slice(i, i + 2)); return g; };
+const dice = (a: Set<string>, b: Set<string>) => { if (!a.size || !b.size) return 0; let n = 0; for (const x of a) if (b.has(x)) n++; return (2 * n) / (a.size + b.size); };
+
 const hay = (m: ProductMediaItem) =>
   `${m.title} ${m.category || ''} ${m.brandLabel} ${m.keywords.join(' ')} ${m.models.join(' ')} ${m.summary} ${m.text}`.toLowerCase();
 
@@ -39,11 +46,14 @@ const hay = (m: ProductMediaItem) =>
 const HAY = new Map<number, string>();
 const WORDS = new Map<number, string[]>();
 const BRANDWORDS = new Map<number, Set<string>>();
+const BIG = new Map<number, Set<string>>();
 for (const m of ITEMS) {
   HAY.set(m.id, hay(m));
   // Words from the concise, relevant fields (not the long spec text → avoids noise).
-  WORDS.set(m.id, toTokens(`${m.title} ${m.category || ''} ${m.models.join(' ')} ${m.summary} ${m.keywords.join(' ')}`, 3).slice(0, 60));
+  const concise = `${m.title} ${m.category || ''} ${m.models.join(' ')} ${m.summary} ${m.keywords.join(' ')}`;
+  WORDS.set(m.id, toTokens(concise, 3).slice(0, 60));
   BRANDWORDS.set(m.id, new Set(toTokens(`${m.brandLabel} ${m.brand || ''}`)));
+  BIG.set(m.id, bigrams(bgNorm(concise)));
 }
 
 export interface MediaMatch { brandSlug?: string | null; brandName?: string | null; query: string; models?: string[]; topic?: string | null; limit?: number }
@@ -54,6 +64,7 @@ export function findProductMedia(opts: MediaMatch): ProductMediaItem[] {
   const models = [...new Set((opts.models || []).flatMap(m => toTokens(m)))].slice(0, 12);
   const brandName = (opts.brandName || '').toLowerCase();
   if (!tokens.length && !models.length) return [];
+  const qBig = bigrams(bgNorm(q));
 
   const scored: { m: ProductMediaItem; s: number }[] = [];
   for (const m of ITEMS) {
@@ -80,6 +91,11 @@ export function findProductMedia(opts: MediaMatch): ProductMediaItem[] {
     // Reverse: the image's own words found inside the (possibly space-less) query.
     for (const w of WORDS.get(m.id)!) if (!brandWords.has(w) && q.includes(w)) { s += 1.2; content += 1; }
 
+    // Bigram overlap — catches Thai compounds with no spaces that neither direction
+    // above hit (e.g. "หุ่นยนต์ดูดฝุ่นตัวไหนแรงสุด" vs "หุ่นยนต์ดูดฝุ่น").
+    const d = dice(qBig, BIG.get(m.id)!);
+    if (d >= 0.2) { s += d * 3; content += 1; }
+
     if (opts.topic && m.topic === opts.topic) s += 1;
 
     // Require real relevance beyond brand; cross-brand items need a stronger signal
@@ -95,6 +111,7 @@ export function findProductMedia(opts: MediaMatch): ProductMediaItem[] {
 export function searchProductMedia(query: string, brandSlug?: string | null, limit = 30): ProductMediaItem[] {
   const q = (query || '').trim().toLowerCase();
   const tokens = toTokens(q);
+  const qBig = bigrams(bgNorm(q));
   const scored: { m: ProductMediaItem; s: number }[] = [];
   for (const m of ITEMS) {
     if (brandSlug && m.brand && m.brand !== brandSlug) continue;
@@ -102,6 +119,7 @@ export function searchProductMedia(query: string, brandSlug?: string | null, lim
     let s = 0;
     for (const t of tokens) if (h.includes(t)) s += 1;                      // forward
     for (const w of WORDS.get(m.id)!) if (q.includes(w)) s += 1;            // reverse (Thai no-space)
+    const d = dice(qBig, BIG.get(m.id)!); if (d >= 0.2) s += d * 3;         // bigram (Thai compounds)
     if (!tokens.length || s > 0) scored.push({ m, s });
   }
   scored.sort((a, b) => b.s - a.s);
