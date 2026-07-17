@@ -34,13 +34,21 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
   }
 
+  // Core columns (always present).
   const patch: Record<string, unknown> = {};
-  for (const k of ['role', 'status', 'brand_id', 'allowed_brand_ids', 'allowed_channels', 'auto_assign', 'max_open_chats', 'name', 'email'] as const) {
+  for (const k of ['role', 'status', 'brand_id', 'allowed_brand_ids', 'allowed_channels', 'name', 'email'] as const) {
     if (k in body) patch[k] = (body as Record<string, unknown>)[k];
   }
   if (Object.keys(patch).length) {
     const { error } = await ctx.sb.from('profiles').update(patch).eq('id', params.id);
     if (error) return NextResponse.json({ error: 'Could not update user' }, { status: 500 });
+  }
+  // Queue-capacity columns come from sql/015; update best-effort so team edits still
+  // work if that migration hasn't been run yet.
+  const queue: Record<string, unknown> = {};
+  for (const k of ['auto_assign', 'max_open_chats'] as const) if (k in body) queue[k] = (body as Record<string, unknown>)[k];
+  if (Object.keys(queue).length) {
+    await ctx.sb.from('profiles').update(queue).eq('id', params.id).then(() => {}, () => {});
   }
 
   await logAudit(ctx.sb, ctx.userId, 'user.update', {

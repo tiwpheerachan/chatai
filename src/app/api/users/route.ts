@@ -50,8 +50,6 @@ export async function POST(req: Request) {
     id: uid, email: body.email, name: body.name, role: body.role,
     allowed_brand_ids: body.allowed_brand_ids ?? null,
     allowed_channels: body.allowed_channels ?? null,
-    auto_assign: body.auto_assign ?? true,
-    max_open_chats: body.max_open_chats ?? null,
   };
   let upErr = (await admin.from('profiles').upsert(patch, { onConflict: 'id' })).error;
   if (upErr) upErr = (await admin.from('profiles').update(patch).eq('id', uid)).error;
@@ -59,6 +57,10 @@ export async function POST(req: Request) {
     // Roll back the auth user so we don't leave a half-created account.
     await admin.auth.admin.deleteUser(uid).catch(() => {});
     return NextResponse.json({ error: 'ตั้งค่าสิทธิ์ไม่สำเร็จ: ' + upErr.message }, { status: 500 });
+  }
+  // Best-effort: queue-capacity fields (from sql/015). Ignored if not migrated yet.
+  if (body.auto_assign !== undefined || body.max_open_chats !== undefined) {
+    await admin.from('profiles').update({ auto_assign: body.auto_assign ?? true, max_open_chats: body.max_open_chats ?? null }).eq('id', uid).then(() => {}, () => {});
   }
 
   await logAudit(ctx.sb, ctx.userId, 'user.create', {
