@@ -149,6 +149,10 @@ export function InboxClient({ userId }: { userId: string }) {
   const [panelTab, setPanelTab] = useState<'draft' | 'insight' | 'info' | 'orders' | 'products' | 'stock' | 'tasks' | 'coupon'>('draft');
   const [insight, setInsight] = useState<any | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
+  // Product-media library search (find any spec/how-to image to send).
+  const [mediaQ, setMediaQ] = useState('');
+  const [mediaResults, setMediaResults] = useState<any[] | null>(null);
+  const [mediaSearching, setMediaSearching] = useState(false);
   // #6 Warehouse stock lookup (BigQuery-backed).
   const [stockQ, setStockQ] = useState('');
   const [stock, setStock] = useState<{ configured: boolean; products: any[]; error?: string; detail?: string } | null>(null);
@@ -433,6 +437,23 @@ export function InboxClient({ userId }: { userId: string }) {
     const t = setTimeout(() => searchStock({ q }), 300);
     return () => clearTimeout(t);
   }, [stockQ, panelTab, searchStock]);
+
+  // Product-media library — live search (type → images appear to send).
+  useEffect(() => {
+    if (panelTab !== 'draft') return;
+    const q = mediaQ.trim();
+    if (q.length < 2) { setMediaResults(null); return; }
+    setMediaSearching(true);
+    const brand = (active as any)?.brand?.slug || (active as any)?.brand_slug || '';
+    const t = setTimeout(() => {
+      fetch(`/api/media?q=${encodeURIComponent(q)}${brand ? `&brand=${brand}` : ''}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => setMediaResults(d?.items || []))
+        .catch(() => setMediaResults([]))
+        .finally(() => setMediaSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [mediaQ, panelTab, active]);
 
   // Draft bubbles ("ช่องๆ"): prefer the split blocks; fall back to the whole text.
   const draftBlocks: string[] = (aiDraft?.blocks?.length ? aiDraft.blocks : (aiDraft?.text ? [aiDraft.text] : []));
@@ -1492,6 +1513,37 @@ export function InboxClient({ userId }: { userId: string }) {
                     )}
                   </div>
                 )}
+
+                {/* Always-available: search the product-image library to send any spec/how-to image */}
+                <div className="mt-2 pt-2 border-t border-slate-100">
+                  <div className="relative">
+                    <Fi name="picture" className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[13px]" />
+                    <input value={mediaQ} onChange={e => setMediaQ(e.target.value)} autoComplete="off"
+                      placeholder="ค้นหารูปข้อมูลสินค้า (สเปก/วิธีใช้) เพื่อส่งให้ลูกค้า…" className="w-full border border-slate-200 rounded-lg pl-7 pr-8 py-1.5 text-[11px]" />
+                    {mediaSearching
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
+                      : mediaQ && <button onClick={() => { setMediaQ(''); setMediaResults(null); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500"><Fi name="cross-small" className="text-sm" /></button>}
+                  </div>
+                  {mediaResults && (
+                    mediaResults.length ? (
+                      <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                        {mediaResults.map((m: any) => (
+                          <div key={m.id} className="group relative rounded-lg overflow-hidden border border-slate-200">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <button type="button" onClick={() => setLightbox(m.url)} className="block w-full aspect-square cursor-zoom-in"><img src={m.url} alt="" className="w-full h-full object-cover" /></button>
+                            <div className="px-1 py-0.5 text-[8px] text-slate-500 line-clamp-2 leading-tight" title={m.summary || m.title}>{m.summary || m.title}</div>
+                            <button onClick={() => sendMedia(m)} disabled={sending}
+                              className="absolute top-1 right-1 p-1 rounded-md bg-emerald-600 text-white shadow disabled:opacity-50 opacity-0 group-hover:opacity-100 transition" title="ส่งรูปนี้ให้ลูกค้า">
+                              {sendingMedia === m.url ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fi name="paper-plane" className="text-[11px]" />}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 text-[10px] text-slate-400">ไม่พบรูปตามคำค้น</div>
+                    )
+                  )}
+                </div>
               </div>
             )}
 

@@ -48,7 +48,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false          # ← paste the Gemini API key in the Render dashboard (not committed)
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+        value: gemini-flash-lite-latest   # 2.0-flash was deprecated (404); lite = cheap + reads spec images well
       # ---- Tutorial-video finder (AI draft suggests a real how-to clip) ----
       # KB-curated YouTube links are used first; this key enables real YouTube
       # search as the fallback. Without it, only KB links are offered (no guessing).
