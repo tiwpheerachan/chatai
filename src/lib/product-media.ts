@@ -23,45 +23,69 @@ export function isOwnedMediaUrl(url: string): boolean {
   return ITEMS.some(m => m.url === url);
 }
 
-const hay = (m: ProductMediaItem) =>
-  `${m.title} ${m.category || ''} ${m.brandLabel} ${m.keywords.join(' ')} ${m.models.join(' ')} ${m.summary} ${m.text}`.toLowerCase();
-
-// Precompute haystacks once.
-const HAY = new Map<number, string>();
-for (const m of ITEMS) HAY.set(m.id, hay(m));
-
-export interface MediaMatch { brandSlug?: string | null; brandName?: string | null; query: string; models?: string[]; topic?: string | null; limit?: number }
-
 // Split on anything that isn't a letter/number/combining-mark. Keeping \p{M}
 // (Thai vowel/tone marks) means words like "หูฟัง" stay whole instead of breaking
 // into single consonants — critical for Thai substring matching.
 const TOK = /[^\p{L}\p{N}\p{M}]+/u;
+const toTokens = (s: string, min = 2) => [...new Set((s || '').toLowerCase().split(TOK).map(t => t.trim()).filter(t => t.length >= min))];
+
+const hay = (m: ProductMediaItem) =>
+  `${m.title} ${m.category || ''} ${m.brandLabel} ${m.keywords.join(' ')} ${m.models.join(' ')} ${m.summary} ${m.text}`.toLowerCase();
+
+// Precompute per item: the haystack string (for forward substring match) AND the
+// item's own significant words (for REVERSE match — needed because Thai queries
+// often have no spaces, e.g. "หูฟังกันน้ำว่ายน้ำได้" is one token, but the image's
+// word "กันน้ำ" is a substring of it).
+const HAY = new Map<number, string>();
+const WORDS = new Map<number, string[]>();
+const BRANDWORDS = new Map<number, Set<string>>();
+for (const m of ITEMS) {
+  HAY.set(m.id, hay(m));
+  // Words from the concise, relevant fields (not the long spec text → avoids noise).
+  WORDS.set(m.id, toTokens(`${m.title} ${m.category || ''} ${m.models.join(' ')} ${m.summary} ${m.keywords.join(' ')}`, 3).slice(0, 60));
+  BRANDWORDS.set(m.id, new Set(toTokens(`${m.brandLabel} ${m.brand || ''}`)));
+}
+
+export interface MediaMatch { brandSlug?: string | null; brandName?: string | null; query: string; models?: string[]; topic?: string | null; limit?: number }
 
 export function findProductMedia(opts: MediaMatch): ProductMediaItem[] {
   const q = (opts.query || '').toLowerCase();
-  const tokens = [...new Set(q.split(TOK).map(t => t.trim()).filter(t => t.length >= 2))].slice(0, 14);
-  const models = [...new Set((opts.models || []).flatMap(m => (m || '').toLowerCase().split(TOK)).map(t => t.trim()).filter(t => t.length >= 2))].slice(0, 12);
+  const tokens = toTokens(q).slice(0, 16);
+  const models = [...new Set((opts.models || []).flatMap(m => toTokens(m)))].slice(0, 12);
   const brandName = (opts.brandName || '').toLowerCase();
-
   if (!tokens.length && !models.length) return [];
 
   const scored: { m: ProductMediaItem; s: number }[] = [];
   for (const m of ITEMS) {
     const h = HAY.get(m.id)!;
-    let s = 0;
-    // brand
+    const brandWords = BRANDWORDS.get(m.id)!;
+    let s = 0, content = 0;
+
+    // Cross-brand = the conversation's brand is known and this item belongs to a
+    // DIFFERENT specific brand (null-brand items like Xiaomi/global are shared).
+    const crossBrand = !!(opts.brandSlug && m.brand && m.brand !== opts.brandSlug);
+
+    // Brand: a booster, NOT counted as content relevance.
     if (opts.brandSlug && m.brand === opts.brandSlug) s += 3;
     else if (brandName && h.includes(brandName)) s += 1;
-    // known product models (strong signal)
-    for (const mod of models) if (h.includes(mod)) s += 3;
-    // free-text query tokens
-    let tokHits = 0;
-    for (const t of tokens) if (h.includes(t)) { s += 1; tokHits += 1; }
-    // topic preference (once vision has classified)
+    if (crossBrand) s -= 2;   // downrank other brands' images
+
+    // Known product models (strongest signal).
+    for (const mod of models) if (h.includes(mod)) { s += 3; content += 1; }
+
+    // Forward: query tokens found in the haystack (skip pure brand words so brand
+    // alone can't fake relevance).
+    for (const t of tokens) if (!brandWords.has(t) && h.includes(t)) { s += 1; content += 1; }
+
+    // Reverse: the image's own words found inside the (possibly space-less) query.
+    for (const w of WORDS.get(m.id)!) if (!brandWords.has(w) && q.includes(w)) { s += 1.2; content += 1; }
+
     if (opts.topic && m.topic === opts.topic) s += 1;
-    // Require a real signal: a model hit, or ≥2 query tokens, or brand+1 token.
-    const strong = models.some(mod => h.includes(mod)) || tokHits >= 2 || (s >= 3 && tokHits >= 1);
-    if (strong) scored.push({ m, s });
+
+    // Require real relevance beyond brand; cross-brand items need a stronger signal
+    // (a model hit or ≥2 content hits) so an unrelated brand's image can't leak in.
+    const minContent = crossBrand ? 2 : 1;
+    if (content >= minContent) scored.push({ m, s });
   }
   scored.sort((a, b) => b.s - a.s);
   return scored.slice(0, opts.limit ?? 4).map(x => x.m);
@@ -70,13 +94,14 @@ export function findProductMedia(opts: MediaMatch): ProductMediaItem[] {
 /** Simple browse/search for the media library UI. */
 export function searchProductMedia(query: string, brandSlug?: string | null, limit = 30): ProductMediaItem[] {
   const q = (query || '').trim().toLowerCase();
-  const tokens = q.split(TOK).map(t => t.trim()).filter(t => t.length >= 2);
+  const tokens = toTokens(q);
   const scored: { m: ProductMediaItem; s: number }[] = [];
   for (const m of ITEMS) {
     if (brandSlug && m.brand && m.brand !== brandSlug) continue;
     const h = HAY.get(m.id)!;
     let s = 0;
-    for (const t of tokens) if (h.includes(t)) s += 1;
+    for (const t of tokens) if (h.includes(t)) s += 1;                      // forward
+    for (const w of WORDS.get(m.id)!) if (q.includes(w)) s += 1;            // reverse (Thai no-space)
     if (!tokens.length || s > 0) scored.push({ m, s });
   }
   scored.sort((a, b) => b.s - a.s);

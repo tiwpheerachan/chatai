@@ -373,6 +373,29 @@ export async function draftReply(opts: {
     ? `\n\n=== สินค้าที่ลูกค้าส่งการ์ด/อ้างถึงในแชท (มักคือ "รุ่นนี้/สองรุ่นนี้" ที่ลูกค้าหมายถึง — ตอบให้ตรงรุ่นเหล่านี้) ===\n${referencedProducts.map((p: any) => `• ${p.item_name}${p.model_name ? ` (${p.model_name})` : ''} — ฿${Number(p.price).toLocaleString()} · ${p.in_stock ? `มีสต็อก ${p.stock}` : 'สินค้าหมด'}`).join('\n')}`
     : '';
 
+  // ---- Pre-read product images (spec sheets / how-to). Matched BEFORE the prompt
+  // so the AI can (a) answer specs from the real spec-sheet text, and (b) get the
+  // image handed to the admin to send. Instant — vision already ran offline.
+  const used: string[] = [];
+  const prodName = (referencedProducts[0]?.item_name || products[0]?.item_name || orderedName || '')
+    .replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  let brandSlug: string | null = null;
+  let brandName: string | null = null;
+  if (brand_id) { const { data } = await sb.from('brands').select('slug,name').eq('id', brand_id).maybeSingle(); brandSlug = (data as any)?.slug || null; brandName = (data as any)?.name || null; }
+
+  let mediaSuggestions: ProductMediaItem[] = [];
+  if (productish || howish || specish) {
+    const modelNames = [prodName, orderedName, ...referencedProducts.map((p: any) => p.item_name), ...products.map((p: any) => p.item_name)].filter(Boolean).map(String);
+    mediaSuggestions = findProductMedia({ brandSlug, brandName, query: topicText, models: modelNames, limit: 4 });
+    if (mediaSuggestions.length) used.push(`รูปข้อมูลสินค้า ${mediaSuggestions.length} รูป`);
+  }
+  // Feed the real spec text from matched spec/comparison sheets into the prompt so
+  // the AI answers specs from actual data (never fabricated).
+  const specMedia = mediaSuggestions.filter(m => (m.topic === 'spec' || m.topic === 'comparison') && (m.text || '').trim()).slice(0, 2);
+  const mediaSpecBlock = specMedia.length
+    ? `\n\n=== ข้อมูลสเปกจากรูปสินค้าจริงของแบรนด์ (ใช้ตอบเรื่องสเปก/ความสามารถได้ ข้อมูลนี้เชื่อถือได้) ===\n${specMedia.map(m => `• ${m.summary}\n${m.text}`).join('\n')}`
+    : '';
+
   // ---- Playbook: prefer the strategy whose condition matches the real order status ----
   const matched = matchScenario(topicText, scenarios);
   const allStrategies = (matched?.scenario.strategies || []).filter(s => s.enabled);
@@ -424,12 +447,12 @@ export async function draftReply(opts: {
 - ถามสถานะ/จัดส่ง/ของที่สั่ง → ดู "ออเดอร์จริงของลูกค้า" · ถามราคา/สต็อก/รุ่น → ดู "สินค้าในร้าน" · มี "สคริปต์ร้าน" → ยึดตามนั้น (เลือกให้ตรงสถานะออเดอร์)
 - **ถ้ามี "ออเดอร์จริงของลูกค้า" อยู่ และลูกค้าถามเรื่องสินค้า/วิธีใช้/สเปก โดยไม่ได้บอกรุ่น → ให้ถือว่าลูกค้าหมายถึง "สินค้าที่อยู่ในออเดอร์ของเขา" ระบุชื่อรุ่นจากออเดอร์นั้นได้เลย ห้ามถามลูกค้าว่า "รุ่นไหน/แคปหน้าสินค้ามา" ทั้งที่ดูจากออเดอร์รู้อยู่แล้ว** (ลูกค้าซื้อไปแล้ว การถามซ้ำทำให้ดูไม่ฉลาด) — ถ้ามีหลายออเดอร์/หลายรุ่น ค่อยถามว่าหมายถึงรุ่นไหนในออเดอร์ของเขา
 - ห้ามแต่งตัวเลข/ราคา/โปร/สถานะที่ไม่มีในข้อมูล
-- **ห้ามเดา/ยืนยันสเปกหรือความสามารถของสินค้าเด็ดขาด** (เช่น "โทรได้ไหม" "กันน้ำไหม" "แบตกี่วัน" "รองรับ...ไหม" "ใช้กับ...ได้ไหม" "มีสี/ไซซ์ไหน") ถ้าไม่มีข้อมูลยืนยันจาก "สินค้าในร้าน"/"สินค้าที่ลูกค้าอ้างถึง"/"คลังความรู้" — ห้ามตอบว่าได้/ไม่ได้ลอยๆ ให้ตอบแบบ "ขอเช็กสเปกรุ่นนี้ให้แป๊บนึงนะคะ" หรือถามยืนยันรุ่น/ชื่อสินค้าก่อน (ตอบผิดเรื่องสเปกอันตรายมาก เช่น Smart Band ที่โทรไม่ได้ ห้ามบอกว่าโทรได้)
+- **ห้ามเดา/ยืนยันสเปกหรือความสามารถของสินค้าเด็ดขาด** (เช่น "โทรได้ไหม" "กันน้ำไหม" "แบตกี่วัน" "รองรับ...ไหม" "ใช้กับ...ได้ไหม" "มีสี/ไซซ์ไหน") ถ้าไม่มีข้อมูลยืนยันจาก "สินค้าในร้าน"/"สินค้าที่ลูกค้าอ้างถึง"/"คลังความรู้"/"ข้อมูลสเปกจากรูปสินค้าจริงของแบรนด์" — ห้ามตอบว่าได้/ไม่ได้ลอยๆ (ถ้ามีข้อมูลสเปกจากรูปสินค้าให้ใช้ตอบได้เลย เป็นข้อมูลจริง) ให้ตอบแบบ "ขอเช็กสเปกรุ่นนี้ให้แป๊บนึงนะคะ" หรือถามยืนยันรุ่น/ชื่อสินค้าก่อน (ตอบผิดเรื่องสเปกอันตรายมาก เช่น Smart Band ที่โทรไม่ได้ ห้ามบอกว่าโทรได้)
 - ให้ดูชื่อรุ่นจริงของสินค้าที่ลูกค้าถาม/ส่งการ์ด/**มีอยู่ในออเดอร์ของลูกค้า**ก่อนเสมอ (เช่น เห็นว่าเป็น "Smart Band" ก็รู้ว่าไม่รองรับการโทร) — ลำดับการหารุ่น: (1) สินค้าที่ลูกค้าส่งการ์ด (2) ออเดอร์จริงของลูกค้า (3) รูปที่ส่งมา แล้วค่อยตอบตามรุ่นนั้น ถ้าหาจากทั้ง 3 แหล่งแล้วยังไม่รู้จริงๆ จึงถามยืนยันรุ่นก่อนตอบเรื่องความสามารถ (อย่าเพิ่งถ้ามีออเดอร์อยู่แล้ว)
 - ตั้ง needs_human=true เฉพาะเมื่อไม่มีข้อมูลช่วยได้เลย หรือเป็นเรื่องต้องตัดสินใจแทนลูกค้า (ยกเลิก/คืนเงิน/เคลม)
 - ตอบภาษาเดียวกับลูกค้า
 - ถ้าลูกค้าถามหลายข้อในคราวเดียว ให้ตอบให้ครบทุกข้อ
-- ถ้าลูกค้าส่งรูป/การ์ดสินค้ามา ให้ยึด "รูปที่ลูกค้าส่งมา" และ "สินค้าที่ลูกค้าส่งการ์ด" ด้านล่างเป็นหลัก อย่าเดารุ่นเอง${visionBlock}${ordersBlock}${productsBlock}${referencedBlock}${playbookBlock}${styleBlock}${kb}
+- ถ้าลูกค้าส่งรูป/การ์ดสินค้ามา ให้ยึด "รูปที่ลูกค้าส่งมา" และ "สินค้าที่ลูกค้าส่งการ์ด" ด้านล่างเป็นหลัก อย่าเดารุ่นเอง${visionBlock}${ordersBlock}${productsBlock}${referencedBlock}${mediaSpecBlock}${playbookBlock}${styleBlock}${kb}
 
 ตอบกลับเป็น JSON อย่างเดียว: {"messages":["<ฟองที่ 1>","<ฟองที่ 2>", ...],"needs_human":true|false,"reason":"<เหตุผลสั้นๆ>"}
 - "messages" = อาเรย์ของข้อความแยกฟอง (ห้ามใส่ Markdown/** ใดๆ) ถ้าจะตอบฟองเดียวก็ใส่ item เดียว`;
@@ -488,7 +511,6 @@ export async function draftReply(opts: {
   const dataBoost = (orders.length ? 0.15 : 0) + (products.length ? 0.1 : 0) + (matched ? 0.1 : 0);
   const confidence = needsHuman ? 0.3 : Math.min(0.96, 0.5 + topSim * 0.35 + dataBoost);
   void customerName;
-  const used: string[] = [];
   if (visionDesc && images.length) used.push(`อ่านรูปที่ลูกค้าส่ง ${images.length} รูป`);
   if (referencedProducts.length) used.push(`สินค้าที่ลูกค้าส่งการ์ด ${referencedProducts.length} รายการ`);
   if (orders.length) used.push(`ออเดอร์ลูกค้า ${orders.length} รายการ`);
@@ -504,26 +526,10 @@ export async function draftReply(opts: {
   // How-to case: find a REAL tutorial video (KB link first, then YouTube search)
   // for the product being discussed. Only when the customer is clearly asking how
   // to USE it — light questions get a normal typed reply, no video. Never fabricated.
-  const prodName = (referencedProducts[0]?.item_name || products[0]?.item_name || orderedName || suggest[0]?.item_name || '')
-    .replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
-  let brandSlug: string | null = null;
-  let brandName: string | null = null;
-  if (brand_id) { const { data } = await sb.from('brands').select('slug,name').eq('id', brand_id).maybeSingle(); brandSlug = (data as any)?.slug || null; brandName = (data as any)?.name || null; }
-
   let tutorialVideos: TutorialVideo[] = [];
   if (HOWTO_RE.test(topicText)) {
     tutorialVideos = await resolveTutorial({ brandId: brand_id, brandSlug, productName: prodName || null, keywords: topicText.slice(0, 120) }).catch(() => []);
     if (tutorialVideos.length) used.push(`คลิปสอนใช้งาน (${tutorialVideos[0].source === 'kb' ? 'จาก KB' : 'YouTube'})`);
-  }
-
-  // Pre-read product images (spec sheets / how-to) the admin can SEND — surface when
-  // the customer asks about a product / how-to / spec. Instant (no vision at reply time).
-  let mediaSuggestions: ProductMediaItem[] = [];
-  if (productish || howish || specish) {
-    const modelNames = [prodName, orderedName, ...referencedProducts.map((p: any) => p.item_name), ...products.map((p: any) => p.item_name)]
-      .filter(Boolean).map(String);
-    mediaSuggestions = findProductMedia({ brandSlug, brandName, query: topicText, models: modelNames, limit: 4 });
-    if (mediaSuggestions.length) used.push(`รูปข้อมูลสินค้า ${mediaSuggestions.length} รูป`);
   }
 
   return {
