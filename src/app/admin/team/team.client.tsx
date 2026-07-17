@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge, StatusDot } from '@/components/ui/badge';
+import { StatusDot } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/avatar';
 import { Modal } from '@/components/ui/modal';
 import { Select, Field } from '@/components/ui/input';
@@ -13,15 +13,18 @@ import { ChannelIcon } from '@/components/ui/channel-icon';
 import { ROLE_LABELS, ROLE_COLORS } from '@/lib/rbac';
 import { CHANNEL_META, PLATFORM_CHANNELS } from '@/lib/utils';
 import type { Profile, Brand, UserRole, ChannelType } from '@/types/database';
-import { SlidersHorizontal, Building2, Globe, Sparkles } from 'lucide-react';
+import { SlidersHorizontal, Building2, Globe, Sparkles, UserPlus } from 'lucide-react';
 
 const ROLES: UserRole[] = ['owner', 'admin', 'supervisor', 'agent', 'viewer', 'ai'];
+type BrandOpt = Pick<Brand, 'id' | 'name' | 'color'>;
+const inputCls = 'w-full text-sm rounded-lg border border-slate-200 px-3 py-2 focus:ring-2 focus:ring-brand-400 focus:border-brand-400';
+const toggle = <T,>(arr: T[], v: T, set: (a: T[]) => void) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
 
 export function TeamClient({
   initialUsers, brands, stats, canManage, isOwner,
 }: {
   initialUsers: Profile[];
-  brands: Pick<Brand, 'id' | 'name' | 'color'>[];
+  brands: BrandOpt[];
   stats: Record<string, { replies: number; conversations: number; last_active: string | null }>;
   canManage: boolean;
   isOwner: boolean;
@@ -29,10 +32,12 @@ export function TeamClient({
   const router = useRouter();
   const [users] = useState(initialUsers);
   const [editing, setEditing] = useState<Profile | null>(null);
+  const [creating, setCreating] = useState(false);
 
   return (
     <>
       <div className="flex justify-end mb-4 gap-2">
+        {canManage && <Button icon={UserPlus} onClick={() => setCreating(true)}>สร้างแอดมิน</Button>}
         <Link href="/admin/workload">
           <Button variant="outline" icon={Sparkles}>แบ่งงาน & Performance</Button>
         </Link>
@@ -108,28 +113,133 @@ export function TeamClient({
         </table>
       </Card>
 
+      {creating && (
+        <CreateUserModal brands={brands} isOwner={isOwner} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); router.refresh(); }} />
+      )}
       {editing && (
-        <EditUserModal
-          user={editing}
-          brands={brands}
-          isOwner={isOwner}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); router.refresh(); }}
-        />
+        <EditUserModal user={editing} brands={brands} isOwner={isOwner} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); router.refresh(); }} />
       )}
     </>
   );
 }
 
-function EditUserModal({
-  user, brands, isOwner, onClose, onSaved,
-}: {
-  user: Profile;
-  brands: Pick<Brand, 'id' | 'name' | 'color'>[];
-  isOwner: boolean;
-  onClose: () => void;
-  onSaved: () => void;
+/** Shared brand + channel scope editor. */
+function ScopeEditor({ brands, brandMode, setBrandMode, brandIds, setBrandIds, chanMode, setChanMode, channels, setChannels }: {
+  brands: BrandOpt[];
+  brandMode: 'inherit' | 'custom'; setBrandMode: (m: 'inherit' | 'custom') => void;
+  brandIds: string[]; setBrandIds: (a: string[]) => void;
+  chanMode: 'inherit' | 'custom'; setChanMode: (m: 'inherit' | 'custom') => void;
+  channels: ChannelType[]; setChannels: (a: ChannelType[]) => void;
 }) {
+  return (
+    <>
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-semibold text-slate-700">แบรนด์ที่เข้าถึงได้</span>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={brandMode === 'inherit'} onChange={e => setBrandMode(e.target.checked ? 'inherit' : 'custom')} />
+            ใช้ค่าตาม Role
+          </label>
+        </div>
+        {brandMode === 'custom' && (
+          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-slate-200 bg-slate-50">
+            {brands.map(b => (
+              <button key={b.id} type="button" onClick={() => toggle(brandIds, b.id, setBrandIds)}
+                className={`text-xs px-2.5 py-1 rounded-full border transition ${brandIds.includes(b.id) ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-200 text-slate-600'}`}>
+                {b.name}
+              </button>
+            ))}
+            {!brands.length && <span className="text-xs text-slate-400">ยังไม่มีแบรนด์</span>}
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-semibold text-slate-700">ช่องทางที่เข้าถึงได้</span>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={chanMode === 'inherit'} onChange={e => setChanMode(e.target.checked ? 'inherit' : 'custom')} />
+            ใช้ค่าตาม Role
+          </label>
+        </div>
+        {chanMode === 'custom' && (
+          <div className="grid grid-cols-2 gap-1.5 p-2 rounded-lg border border-slate-200 bg-slate-50">
+            {PLATFORM_CHANNELS.map(c => (
+              <button key={c} type="button" onClick={() => toggle(channels, c as ChannelType, setChannels)}
+                className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg border transition ${channels.includes(c as ChannelType) ? 'bg-white border-brand-400 ring-1 ring-brand-200' : 'bg-white border-slate-200'}`}>
+                <ChannelIcon channel={c} size="xs" />
+                <span className="text-slate-700">{CHANNEL_META[c]?.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CreateUserModal({ brands, isOwner, onClose, onSaved }: {
+  brands: BrandOpt[]; isOwner: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<UserRole>('agent');
+  const [brandMode, setBrandMode] = useState<'inherit' | 'custom'>('inherit');
+  const [brandIds, setBrandIds] = useState<string[]>([]);
+  const [chanMode, setChanMode] = useState<'inherit' | 'custom'>('inherit');
+  const [channels, setChannels] = useState<ChannelType[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    if (!name.trim() || !email.trim() || password.length < 8) { setErr('กรอกชื่อ อีเมล และรหัสผ่าน (อย่างน้อย 8 ตัว) ให้ครบ'); return; }
+    setSaving(true); setErr('');
+    const r = await fetch('/api/users', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(), email: email.trim(), password, role,
+        allowed_brand_ids: brandMode === 'inherit' ? null : brandIds,
+        allowed_channels: chanMode === 'inherit' ? null : channels,
+      }),
+    });
+    setSaving(false);
+    if (r.ok) return onSaved();
+    const d = await r.json().catch(() => ({}));
+    setErr(d.error || 'สร้างผู้ใช้ไม่สำเร็จ');
+  };
+
+  return (
+    <Modal open onClose={onClose} title="สร้างแอดมินใหม่"
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>ยกเลิก</Button>
+        <Button onClick={save} loading={saving}>สร้างบัญชี</Button>
+      </>}>
+      <div className="space-y-4">
+        {err && <div className="text-xs text-rose-600 bg-rose-50 p-2 rounded">{err}</div>}
+        <Field label="ชื่อที่แสดง"><input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="เช่น แอดมินนุ่น" /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="อีเมล (ใช้ล็อกอิน)"><input className={inputCls} type="email" autoComplete="off" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" /></Field>
+          <Field label="รหัสผ่าน (≥ 8 ตัว)"><input className={inputCls} type="text" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="ตั้งรหัสผ่าน" /></Field>
+        </div>
+        <Field label="Role (สิทธิ์)">
+          <Select value={role} onChange={e => setRole(e.target.value as UserRole)}>
+            {ROLES.filter(r => r !== 'owner' || isOwner).map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+          </Select>
+        </Field>
+        <ScopeEditor brands={brands} brandMode={brandMode} setBrandMode={setBrandMode} brandIds={brandIds} setBrandIds={setBrandIds}
+          chanMode={chanMode} setChanMode={setChanMode} channels={channels} setChannels={setChannels} />
+        <p className="text-[11px] text-slate-400 flex items-center gap-1"><Sparkles className="w-3 h-3" /> ผู้ใช้ล็อกอินได้ทันทีด้วยอีเมล+รหัสนี้ · แก้ไขสิทธิ์/รหัสภายหลังได้</p>
+      </div>
+    </Modal>
+  );
+}
+
+function EditUserModal({ user, brands, isOwner, onClose, onSaved }: {
+  user: Profile; brands: BrandOpt[]; isOwner: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user.role);
   const [status, setStatus] = useState(user.status);
   const [brandMode, setBrandMode] = useState<'inherit' | 'custom'>(user.allowed_brand_ids === null ? 'inherit' : 'custom');
@@ -142,22 +252,21 @@ function EditUserModal({
   const [err, setErr] = useState('');
   const isQueueRole = ['agent', 'supervisor', 'admin'].includes(role);
 
-  const toggle = <T,>(arr: T[], v: T, set: (a: T[]) => void) =>
-    set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
-
   const save = async () => {
+    if (password && password.length < 8) { setErr('รหัสผ่านต้องมีอย่างน้อย 8 ตัว'); return; }
     setSaving(true); setErr('');
+    const body: Record<string, unknown> = {
+      role, status,
+      allowed_brand_ids: brandMode === 'inherit' ? null : brandIds,
+      allowed_channels: chanMode === 'inherit' ? null : channels,
+      auto_assign: autoAssign,
+      max_open_chats: maxOpen.trim() === '' ? null : Math.max(0, parseInt(maxOpen, 10) || 0),
+    };
+    if (name.trim() && name.trim() !== user.name) body.name = name.trim();
+    if (email.trim() && email.trim() !== user.email) body.email = email.trim();
+    if (password) body.password = password;
     const r = await fetch(`/api/users/${user.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        role,
-        status,
-        allowed_brand_ids: brandMode === 'inherit' ? null : brandIds,
-        allowed_channels: chanMode === 'inherit' ? null : channels,
-        auto_assign: autoAssign,
-        max_open_chats: maxOpen.trim() === '' ? null : Math.max(0, parseInt(maxOpen, 10) || 0),
-      }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     setSaving(false);
     if (r.ok) return onSaved();
@@ -166,24 +275,28 @@ function EditUserModal({
   };
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`แก้ไขสิทธิ์ — ${user.name}`}
+    <Modal open onClose={onClose} title={`แก้ไข — ${user.name}`}
       footer={<>
         <Button variant="ghost" onClick={onClose}>ยกเลิก</Button>
         <Button onClick={save} loading={saving}>บันทึก</Button>
-      </>}
-    >
+      </>}>
       <div className="space-y-4">
         {err && <div className="text-xs text-rose-600 bg-rose-50 p-2 rounded">{err}</div>}
+
+        {/* Login / identity */}
+        <div className="rounded-lg border border-slate-200 p-3 space-y-3">
+          <div className="text-xs font-semibold text-slate-700">บัญชีเข้าสู่ระบบ</div>
+          <Field label="ชื่อที่แสดง"><input className={inputCls} value={name} onChange={e => setName(e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="อีเมล (ใช้ล็อกอิน)"><input className={inputCls} type="email" autoComplete="off" value={email} onChange={e => setEmail(e.target.value)} /></Field>
+            <Field label="ตั้งรหัสผ่านใหม่"><input className={inputCls} type="text" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="เว้นว่าง = ไม่เปลี่ยน" /></Field>
+          </div>
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Role">
             <Select value={role} onChange={e => setRole(e.target.value as UserRole)}>
-              {ROLES.filter(r => r !== 'owner' || isOwner).map(r => (
-                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-              ))}
+              {ROLES.filter(r => r !== 'owner' || isOwner).map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </Select>
           </Field>
           <Field label="สถานะ">
@@ -196,51 +309,9 @@ function EditUserModal({
           </Field>
         </div>
 
-        {/* Brand scope */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-semibold text-slate-700">แบรนด์ที่เข้าถึงได้</span>
-            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
-              <input type="checkbox" checked={brandMode === 'inherit'} onChange={e => setBrandMode(e.target.checked ? 'inherit' : 'custom')} />
-              ใช้ค่าตาม Role
-            </label>
-          </div>
-          {brandMode === 'custom' && (
-            <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-slate-200 bg-slate-50">
-              {brands.map(b => (
-                <button key={b.id} type="button" onClick={() => toggle(brandIds, b.id, setBrandIds)}
-                  className={`text-xs px-2.5 py-1 rounded-full border transition ${brandIds.includes(b.id) ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-slate-200 text-slate-600'}`}>
-                  {b.name}
-                </button>
-              ))}
-              {!brands.length && <span className="text-xs text-slate-400">ยังไม่มีแบรนด์</span>}
-            </div>
-          )}
-        </div>
+        <ScopeEditor brands={brands} brandMode={brandMode} setBrandMode={setBrandMode} brandIds={brandIds} setBrandIds={setBrandIds}
+          chanMode={chanMode} setChanMode={setChanMode} channels={channels} setChannels={setChannels} />
 
-        {/* Channel scope */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-semibold text-slate-700">ช่องทางที่เข้าถึงได้</span>
-            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer">
-              <input type="checkbox" checked={chanMode === 'inherit'} onChange={e => setChanMode(e.target.checked ? 'inherit' : 'custom')} />
-              ใช้ค่าตาม Role
-            </label>
-          </div>
-          {chanMode === 'custom' && (
-            <div className="grid grid-cols-2 gap-1.5 p-2 rounded-lg border border-slate-200 bg-slate-50">
-              {PLATFORM_CHANNELS.map(c => (
-                <button key={c} type="button" onClick={() => toggle(channels, c as ChannelType, setChannels)}
-                  className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg border transition ${channels.includes(c as ChannelType) ? 'bg-white border-brand-400 ring-1 ring-brand-200' : 'bg-white border-slate-200'}`}>
-                  <ChannelIcon channel={c} size="xs" />
-                  <span className="text-slate-700">{CHANNEL_META[c]?.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Auto-distribution capacity */}
         {isQueueRole && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2.5">
             <label className="flex items-center justify-between cursor-pointer">

@@ -134,6 +134,21 @@ export const userAdminUpdateSchema = z.object({
   allowed_channels: z.array(channelEnum).nullable().optional(),
   auto_assign: z.boolean().optional(),                        // opt-in to the auto-distribution queue
   max_open_chats: z.number().int().min(0).max(100000).nullable().optional(), // null = unlimited
+  name: z.string().min(1).max(120).optional(),
+  email: z.string().email().max(200).optional(),             // admin changes the login email
+  password: z.string().min(8).max(72).optional(),            // admin resets the password
+}).strict();
+
+// Admin creates a new user (login + role/scope from the first registration).
+export const userCreateSchema = z.object({
+  email: z.string().email().max(200),
+  password: z.string().min(8).max(72),
+  name: z.string().min(1).max(120),
+  role: roleEnum,
+  allowed_brand_ids: z.array(uuid).nullable().optional(),
+  allowed_channels: z.array(channelEnum).nullable().optional(),
+  auto_assign: z.boolean().optional(),
+  max_open_chats: z.number().int().min(0).max(100000).nullable().optional(),
 }).strict();
 
 export const rolePermissionsUpdateSchema = z.object({
