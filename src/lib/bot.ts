@@ -4,6 +4,7 @@ import { retrieve, type RetrievedDoc } from './rag';
 import { getPlaybook, matchScenario, type PlaybookScenario } from './playbook';
 import { getBuyerOrders, searchProducts, getItemsByIds, type BuyerOrder } from './chat-source/client';
 import { resolveTutorial, type TutorialVideo } from './youtube';
+import { findProductMedia, type ProductMediaItem } from './product-media';
 import type { Message } from '@/types/database';
 
 // A customer who can't work out how to USE the product — the case where a how-to
@@ -163,7 +164,7 @@ async function getAdminStyleExamples(sb: ReturnType<typeof createAdminClient>, b
   return out;
 }
 
-export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; tutorialVideos?: TutorialVideo[]; sawImage?: boolean; blocks: string[]; }
+export interface DraftResult extends BotReply { needsHuman: boolean; reason?: string; usedExamples: number; used?: string[]; suggestedProducts?: any[]; tutorialVideos?: TutorialVideo[]; mediaSuggestions?: ProductMediaItem[]; sawImage?: boolean; blocks: string[]; }
 
 /**
  * Robustly pull a JSON object out of an LLM response. Handles the common ways a
@@ -503,14 +504,26 @@ export async function draftReply(opts: {
   // How-to case: find a REAL tutorial video (KB link first, then YouTube search)
   // for the product being discussed. Only when the customer is clearly asking how
   // to USE it — light questions get a normal typed reply, no video. Never fabricated.
+  const prodName = (referencedProducts[0]?.item_name || products[0]?.item_name || orderedName || suggest[0]?.item_name || '')
+    .replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  let brandSlug: string | null = null;
+  let brandName: string | null = null;
+  if (brand_id) { const { data } = await sb.from('brands').select('slug,name').eq('id', brand_id).maybeSingle(); brandSlug = (data as any)?.slug || null; brandName = (data as any)?.name || null; }
+
   let tutorialVideos: TutorialVideo[] = [];
   if (HOWTO_RE.test(topicText)) {
-    const prodName = (referencedProducts[0]?.item_name || products[0]?.item_name || suggest[0]?.item_name || '')
-      .replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
-    let brandSlug: string | null = null;
-    if (brand_id) { const { data } = await sb.from('brands').select('slug').eq('id', brand_id).maybeSingle(); brandSlug = (data as any)?.slug || null; }
     tutorialVideos = await resolveTutorial({ brandId: brand_id, brandSlug, productName: prodName || null, keywords: topicText.slice(0, 120) }).catch(() => []);
     if (tutorialVideos.length) used.push(`คลิปสอนใช้งาน (${tutorialVideos[0].source === 'kb' ? 'จาก KB' : 'YouTube'})`);
+  }
+
+  // Pre-read product images (spec sheets / how-to) the admin can SEND — surface when
+  // the customer asks about a product / how-to / spec. Instant (no vision at reply time).
+  let mediaSuggestions: ProductMediaItem[] = [];
+  if (productish || howish || specish) {
+    const modelNames = [prodName, orderedName, ...referencedProducts.map((p: any) => p.item_name), ...products.map((p: any) => p.item_name)]
+      .filter(Boolean).map(String);
+    mediaSuggestions = findProductMedia({ brandSlug, brandName, query: topicText, models: modelNames, limit: 4 });
+    if (mediaSuggestions.length) used.push(`รูปข้อมูลสินค้า ${mediaSuggestions.length} รูป`);
   }
 
   return {
@@ -528,6 +541,8 @@ export async function draftReply(opts: {
     suggestedProducts: suggest,
     // Real how-to video(s) to send when the customer can't use the product.
     tutorialVideos,
+    // Pre-read brand images (spec sheets / how-to) the admin can send in one tap.
+    mediaSuggestions,
     sawImage: images.length > 0,
   };
 }

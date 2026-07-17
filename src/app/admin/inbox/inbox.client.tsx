@@ -484,6 +484,21 @@ export function InboxClient({ userId }: { userId: string }) {
     finally { setSending(false); }
   };
 
+  // Send a pre-read product image (spec sheet / how-to) to the customer.
+  const [sendingMedia, setSendingMedia] = useState<string | null>(null);
+  const sendMedia = async (m: any) => {
+    if (!active || sending || sendingMedia || !m?.url) return;
+    setSendingMedia(m.url); setSending(true);
+    try {
+      const r = await fetch(`/api/conversations/${active.id}/send-media`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: m.url }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'ส่งรูปไม่สำเร็จ'); }
+      refreshActive();
+    } catch (e) { alert((e as Error).message); }
+    finally { setSendingMedia(null); setSending(false); }
+  };
+
   const sendVoucherCard = async (v: any) => {
     if (!active || sending) return;
     setSending(true);
@@ -1449,6 +1464,27 @@ export function InboxClient({ userId }: { userId: string }) {
                             <button onClick={() => sendTutorial(v)} disabled={sending}
                               className="text-[10px] font-medium text-white bg-rose-500 hover:bg-rose-600 rounded-md px-2 py-1 shrink-0 disabled:opacity-50 flex items-center gap-1">
                               <Fi name="paper-plane" className="text-[10px]" /> ส่ง
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(aiDraft.mediaSuggestions?.length ?? 0) > 0 && (
+                      <div className="pt-1 space-y-1">
+                        <div className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                          <Fi name="picture" className="text-[11px]" /> รูปข้อมูลสินค้า (กดส่งรูปให้ลูกค้าได้เลย)
+                        </div>
+                        {aiDraft.mediaSuggestions.map((m: any) => (
+                          <div key={m.id} className="w-full flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:border-emerald-300 hover:bg-emerald-50/30">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <button type="button" onClick={() => setLightbox(m.url)} className="shrink-0 cursor-zoom-in"><img src={m.url} alt="" className="w-11 h-11 rounded object-cover" /></button>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] text-slate-700 line-clamp-2 leading-tight">{m.summary || m.title}</div>
+                              <span className="text-[9px] text-slate-400">{m.brandLabel}{m.category ? ` · ${m.category}` : ''}</span>
+                            </div>
+                            <button onClick={() => sendMedia(m)} disabled={sending}
+                              className="text-[10px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-2 py-1 shrink-0 disabled:opacity-50 flex items-center gap-1">
+                              {sendingMedia === m.url ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fi name="paper-plane" className="text-[10px]" />} ส่งรูป
                             </button>
                           </div>
                         ))}
