@@ -67,9 +67,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     text: body.text,
   });
 
-  // Non-Shopee channels keep the existing outbound adapter.
+  // Non-Shopee channels keep the existing outbound adapter (per-brand page token for Meta).
   if (channel !== 'shopee' && cust?.channel_user_id) {
-    await sendTo(conv.channel, cust.channel_user_id, body.text);
+    await sendTo(conv.channel, cust.channel_user_id, body.text, { brandId: (conv as any).brand_id ?? null });
   }
 
   await logAudit(ctx.sb, ctx.userId, 'chat.reply', {

@@ -78,3 +78,7 @@ services:
         sync: false
       - key: META_PAGE_ACCESS_TOKEN
         sync: false
+      # Multi-brand Facebook: ONE System-User token reads all pages (/me/accounts);
+      # per-page tokens are derived on demand. Paste it in the Render dashboard.
+      - key: META_SYSTEM_USER_TOKEN
+        sync: false

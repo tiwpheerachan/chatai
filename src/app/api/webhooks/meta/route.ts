@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ingest } from '@/lib/ingest';
 import { verifyMetaSignature } from '@/lib/webhook-security';
+import { brandForPage, pageTokenById, getSenderProfile } from '@/lib/meta';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,21 +29,27 @@ export async function POST(req: Request) {
     return new NextResponse('Bad request', { status: 400 });
   }
 
+  const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
   for (const entry of body.entry || []) {
+    // entry.id = the Page ID → which brand this message belongs to.
+    const pageId = entry.id != null ? String(entry.id) : '';
+    const brand_id = pageId ? await brandForPage(pageId).catch(() => null) : null;
+    const pageToken = pageId ? await pageTokenById(pageId).catch(() => null) : null;
+
     for (const event of entry.messaging || []) {
-      if (event.message?.text && event.sender?.id) {
-        const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
-        try {
-          await ingest({
-            channel: platform,
-            channel_user_id: event.sender.id,
-            display_name: platform === 'instagram' ? 'IG User' : 'FB User',
-            text: event.message.text,
-            avatar: platform === 'instagram' ? '📷' : '📘',
-          });
-        } catch (e) {
-          console.error('[webhook:meta] ingest failed', (e as Error).message);
-        }
+      if (!event.message?.text || !event.sender?.id) continue;
+      // Real customer name + avatar (needs the page token).
+      let name = platform === 'instagram' ? 'IG User' : 'FB User';
+      let avatar = platform === 'instagram' ? '📷' : '📘';
+      if (pageToken) {
+        const prof = await getSenderProfile(pageToken, String(event.sender.id)).catch(() => ({} as { name?: string; pic?: string }));
+        if (prof.name) name = prof.name;
+        if (prof.pic) avatar = prof.pic;
+      }
+      try {
+        await ingest({ channel: platform, channel_user_id: String(event.sender.id), display_name: name, text: event.message.text, avatar, brand_id });
+      } catch (e) {
+        console.error('[webhook:meta] ingest failed', (e as Error).message);
       }
     }
   }

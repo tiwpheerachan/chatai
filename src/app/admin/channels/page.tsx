@@ -32,8 +32,8 @@ export default async function ChannelsPage() {
               {inst[0]?.webhook_url && (
                 <div className="text-[9px] font-mono bg-slate-50 p-2 rounded mb-2 break-all">{inst[0].webhook_url}</div>
               )}
-              <Link href={`/admin/channels/${k}`} className="block w-full text-center text-xs py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
-                {connected ? 'จัดการ' : '+ เชื่อมต่อ'}
+              <Link href={k === 'facebook' ? '/admin/channels/meta' : `/admin/channels/${k}`} className="block w-full text-center text-xs py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
+                {k === 'facebook' ? 'เชื่อมต่อหลายแบรนด์' : connected ? 'จัดการ' : '+ เชื่อมต่อ'}
               </Link>
             </Card>
           );
