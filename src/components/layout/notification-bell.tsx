@@ -34,17 +34,61 @@ export function NotificationBell() {
   const [data, setData] = useState<NotiData | null>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'all' | NotiItem['type']>('all');
+  const [canNotify, setCanNotify] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const seen = useRef<Set<string>>(new Set());
+  const primed = useRef(false);
 
-  const load = useCallback(() => {
-    fetch('/api/notifications').then(r => r.ok ? r.json() : null).then(d => { if (d?.counts) setData(d); }).catch(() => {});
+  // Short beep via Web Audio (no asset needed).
+  const beep = useCallback(() => {
+    try {
+      const AC = (window.AudioContext || (window as any).webkitAudioContext);
+      if (!AC) return;
+      const ctx = new AC();
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      o.start(); o.stop(ctx.currentTime + 0.36);
+    } catch { /* ignore */ }
   }, []);
 
+  const load = useCallback(() => {
+    fetch('/api/notifications').then(r => r.ok ? r.json() : null).then((d: NotiData | null) => {
+      if (!d?.counts) return;
+      setData(d);
+      // Desktop notification for genuinely NEW notable items (not on first load).
+      const items = d.items || [];
+      if (!primed.current) { items.forEach(i => seen.current.add(i.id)); primed.current = true; return; }
+      const fresh = items.filter(i => !seen.current.has(i.id));
+      fresh.forEach(i => seen.current.add(i.id));
+      const notable = fresh.filter(i => i.type === 'urgent' || i.type === 'new' || i.type === 'vip');
+      if (notable.length && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        const top = notable[0];
+        const label = { urgent: '🔺 เคสด่วน/เสี่ยง', vip: '👑 ลูกค้า VIP', new: '💬 แชทใหม่', repeat: '🔄 ลูกค้าเก่า' }[top.type];
+        const n = new Notification(`${label}${notable.length > 1 ? ` +${notable.length - 1}` : ''}`, {
+          body: `${top.name}${top.snippet ? ': ' + top.snippet.slice(0, 80) : ''}`,
+          icon: top.avatar || undefined, tag: 'nexus-chat',
+        });
+        n.onclick = () => { window.focus(); router.push(`/admin/inbox?c=${top.id}`); n.close(); };
+        beep();
+      }
+    }).catch(() => {});
+  }, [router, beep]);
+
   useEffect(() => {
+    if (typeof Notification !== 'undefined') setCanNotify(Notification.permission === 'granted');
     load();
-    const t = setInterval(load, 45000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
+
+  const askPermission = () => {
+    if (typeof Notification === 'undefined') return;
+    Notification.requestPermission().then(p => setCanNotify(p === 'granted'));
+  };
 
   // Close on outside click.
   useEffect(() => {
@@ -78,9 +122,16 @@ export function NotificationBell() {
         <div className="absolute bottom-10 left-0 z-50 w-[330px] max-h-[70vh] bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden">
           <div className="px-3 py-2.5 border-b border-slate-100 flex items-center justify-between">
             <span className="text-sm font-bold text-slate-800">การแจ้งเตือน</span>
-            <button onClick={load} className="text-[11px] text-slate-400 hover:text-brand-600 flex items-center gap-1">
-              <Fi name="refresh" className="text-[11px]" /> รีเฟรช
-            </button>
+            <div className="flex items-center gap-2">
+              {!canNotify && (
+                <button onClick={askPermission} className="text-[11px] text-brand-600 hover:underline flex items-center gap-1" title="ให้เด้งแจ้งเตือนบนหน้าจอเมื่อมีแชทใหม่">
+                  <Fi name="bell-ring" className="text-[11px]" /> เปิดเด้งแจ้งเตือน
+                </button>
+              )}
+              <button onClick={load} className="text-[11px] text-slate-400 hover:text-brand-600 flex items-center gap-1">
+                <Fi name="refresh" className="text-[11px]" /> รีเฟรช
+              </button>
+            </div>
           </div>
 
           <div className="flex gap-1 px-2 py-1.5 border-b border-slate-100 flex-wrap">
