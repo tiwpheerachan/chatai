@@ -42,6 +42,7 @@ const NAV: NavGroup[] = [
       { href: '/admin/analytics', label: 'Analytics', icon: 'chart-line-up', perm: ['analytics.read', 'analytics.own'] },
       { href: '/admin/insights', label: 'วิเคราะห์เชิงลึก', icon: 'chart-pie-alt', perm: 'chat.read' },
       { href: '/admin/questions', label: 'คำถามยอดฮิต', icon: 'interrogation', perm: 'chat.read' },
+      { href: '/admin/shift', label: 'สรุปปิดกะ', icon: 'clipboard-list-check', perm: 'chat.read' },
       { href: '/admin/team', label: 'ทีม & สิทธิ์', icon: 'shield-check', perm: 'team.read' },
       { href: '/admin/workload', label: 'แบ่งงาน & Performance', icon: 'users-alt', perm: ['analytics.read', 'analytics.own'] },
       { href: '/admin/channels', label: 'ช่องทาง', icon: 'plug-connection', perm: 'channel.read' },
