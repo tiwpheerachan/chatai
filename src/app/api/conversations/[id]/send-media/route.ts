@@ -5,6 +5,7 @@ import { safeUuid } from '@/lib/validation';
 import { logAudit, reqIp } from '@/lib/audit';
 import { sendImage, ChatSourceError } from '@/lib/chat-source/client';
 import { isOwnedMediaUrl } from '@/lib/product-media';
+import { pageTokenForBrand, sendMetaImage } from '@/lib/meta';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -25,11 +26,26 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
   const { data: conv } = await ctx.sb
     .from('conversations')
-    .select('channel, external_id, shop_id, buyer_id, customer:customers(channel_user_id)')
+    .select('channel, external_id, shop_id, buyer_id, brand_id, customer:customers(channel_user_id)')
     .eq('id', params.id)
     .single();
   if (!conv) return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
-  if ((conv as any).channel !== 'shopee') return NextResponse.json({ error: 'รองรับส่งรูปเฉพาะ Shopee ในตอนนี้' }, { status: 400 });
+  const channel = (conv as any).channel as string;
+
+  // Facebook / Instagram: Meta fetches the image URL itself (no byte upload).
+  if (channel === 'facebook' || channel === 'instagram') {
+    const recipientId = (conv as any).buyer_id || (conv as any).customer?.channel_user_id;
+    if (!recipientId) return NextResponse.json({ error: 'ไม่พบผู้รับ' }, { status: 400 });
+    const token = await pageTokenForBrand((conv as any).brand_id ?? null, channel as any);
+    if (!token) return NextResponse.json({ error: 'ยังไม่ได้เชื่อมเพจ Facebook ของแบรนด์นี้' }, { status: 400 });
+    const r = await sendMetaImage(token, String(recipientId), url);
+    if (!r.ok) return NextResponse.json({ error: 'ส่งรูปไม่สำเร็จ: ' + (r.error || '') }, { status: 502 });
+    const msg = await addMessage({ conversation_id: params.id, sender_type: 'agent', sender_id: ctx.userId, text: null, message_type: 'image', attachments: [{ type: 'image', url }] });
+    await logAudit(ctx.sb, ctx.userId, 'chat.media', { targetType: 'conversation', targetId: params.id, details: { url, channel }, ip: reqIp(req) });
+    return NextResponse.json(msg);
+  }
+
+  if (channel !== 'shopee') return NextResponse.json({ error: 'ยังไม่รองรับส่งรูปในช่องทางนี้' }, { status: 400 });
 
   const shopId = (conv as any).shop_id;
   const extConvId = (conv as any).external_id;

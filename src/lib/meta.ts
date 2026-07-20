@@ -94,6 +94,19 @@ export async function sendMetaMessage(pageToken: string, recipientId: string, te
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+/** Send an IMAGE (by public URL) to a customer — Meta fetches the URL itself, so
+ *  our public product-media URLs work directly (no byte upload like Shopee). */
+export async function sendMetaImage(pageToken: string, recipientId: string, imageUrl: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch(`${GRAPH}/me/messages?access_token=${encodeURIComponent(pageToken)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: recipientId }, message: { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } }, messaging_type: 'RESPONSE' }),
+    });
+    if (!r.ok) return { ok: false, error: (await r.text()).slice(0, 200) };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
 // Auto-map a page name to a Nexus brand: strip "Thailand/Store/Official" noise,
 // then match against brand name/slug. Returns brand_id or null.
 const clean = (s: string) => s.toLowerCase().replace(/thailand|thai|official|offcial|store|จำกัด|\(.*?\)/g, '').replace(/[^a-z0-9ก-๙]+/g, '').trim();
