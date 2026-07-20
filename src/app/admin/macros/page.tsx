@@ -1,6 +1,7 @@
 import { Topbar } from '@/components/layout/topbar';
 import { Card } from '@/components/ui/card';
 import { createClient } from '@/lib/supabase/server';
+import { AddMacroButton } from './add-macro.client';
 
 export default async function MacrosPage() {
   const supabase = createClient();
@@ -8,7 +9,7 @@ export default async function MacrosPage() {
   return (
     <>
       <Topbar title="Macros / Quick Replies" subtitle="เทมเพลตตอบเร็ว">
-        <button className="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded-lg font-semibold">+ เพิ่ม Macro</button>
+        <AddMacroButton />
       </Topbar>
       <div className="p-6 overflow-y-auto scroll-thin flex-1">
         <Card>
