@@ -21,7 +21,7 @@ export interface AssignmentSettings {
 const DEFAULT_SETTINGS: AssignmentSettings = { enabled: true, strategy: 'performance', sla_first_sec: 300, queue_days: 14 };
 
 export interface AgentProfile {
-  id: string; name: string; role: string; status: string;
+  id: string; name: string; role: string; status: string; online: boolean;
   allowed_brand_ids: string[] | null; auto_assign: boolean; max_open_chats: number | null;
 }
 export interface AgentPerf {
@@ -56,16 +56,23 @@ export async function updateSettings(patch: Partial<AssignmentSettings>): Promis
 
 /** All profiles that can work the queue (role + not disabled). */
 export async function queueAgents(): Promise<AgentProfile[]> {
-  const { data } = await sb().from('profiles')
-    .select('id,name,role,status,allowed_brand_ids,auto_assign,max_open_chats')
-    .neq('status', 'disabled');
-  return ((data as any[]) || [])
+  // last_seen is from sql/018 — select it, but fall back if not migrated yet.
+  let data: any[] | null = null;
+  const full = await sb().from('profiles').select('id,name,role,status,allowed_brand_ids,auto_assign,max_open_chats,last_seen').neq('status', 'disabled');
+  if (full.error) {
+    const basic = await sb().from('profiles').select('id,name,role,status,allowed_brand_ids,auto_assign,max_open_chats').neq('status', 'disabled');
+    data = basic.data as any[];
+  } else data = full.data as any[];
+  const fresh = Date.now() - 5 * 60_000;
+  return (data || [])
     .filter(p => QUEUE_ROLES.has(p.role))
     .map(p => ({
       id: p.id, name: p.name, role: p.role, status: p.status || 'offline',
       allowed_brand_ids: p.allowed_brand_ids ?? null,
       auto_assign: p.auto_assign ?? true,
       max_open_chats: p.max_open_chats ?? null,
+      // Treat a recent heartbeat as online even if the status column lagged.
+      online: p.status === 'online' || (p.last_seen ? new Date(p.last_seen).getTime() > fresh : false),
     }));
 }
 
@@ -151,7 +158,7 @@ export async function autoAssignQueue(opts: { brandsIn?: string[] | null; limit?
   const result: AssignResult = { assigned: 0, skippedNoAgent: 0, perAgent: {} };
   if (!queue.length) return result;
 
-  const agents = (await queueAgents()).filter(a => a.auto_assign && a.status === 'online');
+  const agents = (await queueAgents()).filter(a => a.auto_assign && a.online);
   if (!agents.length) { result.skippedNoAgent = queue.length; return result; }
   const perf = await agentPerf(7);
   const loads = await openLoads(agents.map(a => a.id));
@@ -195,7 +202,7 @@ export async function rebalanceWaiting(opts: { brandsIn?: string[] | null; strat
   const result: RebalanceResult = { moved: 0, perAgent: {} };
 
   const agents = await queueAgents();
-  const online = agents.filter(a => a.auto_assign && a.status === 'online');
+  const online = agents.filter(a => a.auto_assign && a.online);
   if (!online.length) return result;
   const perf = await agentPerf(7);
   const loads = await openLoads(agents.map(a => a.id));

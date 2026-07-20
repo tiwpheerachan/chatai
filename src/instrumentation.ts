@@ -43,6 +43,14 @@ export async function register() {
       const done = bf.filter((x) => x?.caught_up).length;
       if (bf.length) console.log(`[cron] backfill — ${bf.length} shops, +${bfConv} conv, ${done} now caught up`);
 
+      // Presence sweep: flip agents to offline if we haven't heard a heartbeat in
+      // 5 min (best-effort — no-op if last_seen column / sql/018 isn't there yet).
+      try {
+        const { createAdminClient } = await import('@/lib/supabase/admin');
+        const stale = new Date(Date.now() - 5 * 60_000).toISOString();
+        await createAdminClient().from('profiles').update({ status: 'offline' }).eq('status', 'online').lt('last_seen', stale).then(() => {}, () => {});
+      } catch { /* ignore */ }
+
       // Smart distribution: auto-assign the freshly-arrived WAITING queue to
       // eligible online agents (no-op when disabled or no online agents).
       try {
