@@ -149,6 +149,8 @@ export function InboxClient({ userId }: { userId: string }) {
   const [panelTab, setPanelTab] = useState<'draft' | 'insight' | 'info' | 'orders' | 'products' | 'stock' | 'tasks' | 'coupon'>('draft');
   const [insight, setInsight] = useState<any | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
+  // #12 Per-brand greeting display names for THIS admin.
+  const [greetingNames, setGreetingNames] = useState<Record<string, string>>({});
   // Product-media library search (find any spec/how-to image to send).
   const [mediaQ, setMediaQ] = useState('');
   const [mediaResults, setMediaResults] = useState<any[] | null>(null);
@@ -437,6 +439,24 @@ export function InboxClient({ userId }: { userId: string }) {
     const t = setTimeout(() => searchStock({ q }), 300);
     return () => clearTimeout(t);
   }, [stockQ, panelTab, searchStock]);
+
+  // #12 Load this admin's per-brand greeting names once.
+  useEffect(() => {
+    fetch('/api/greetings').then(r => (r.ok ? r.json() : null)).then(d => { if (d?.greetings) setGreetingNames(d.greetings); }).catch(() => {});
+  }, []);
+
+  // Suggest a greeting only when the chat is brand-new (a customer just opened it and
+  // no agent/AI has replied yet). Fills the composer — human sends (no auto-reply).
+  const greetingSuggest = useMemo(() => {
+    const msgs = (active?.messages || []) as any[];
+    if (!msgs.length) return null;
+    const hasCustomer = msgs.some(m => m.sender_type === 'customer');
+    const hasReply = msgs.some(m => m.sender_type === 'agent' || m.sender_type === 'ai' || m.sender_type === 'note');
+    if (!hasCustomer || hasReply) return null;
+    const bid = (active as any)?.brand_id;
+    const nm = (bid && greetingNames[bid]) || userName(userId) || 'แอดมิน';
+    return `สวัสดีค่ะ แอดมิน${nm}ยินดีให้บริการค่ะ 🙏`;
+  }, [active, greetingNames, userId]);
 
   // Product-media library — live search (type → images appear to send).
   useEffect(() => {
@@ -1238,6 +1258,14 @@ export function InboxClient({ userId }: { userId: string }) {
                     <div className="text-[10px] text-slate-400">แคตตาล็อกอัปเดตรายวัน · สต็อกเป็นค่าประมาณ · กดสินค้าเพื่อส่งการ์ดให้ลูกค้า</div>
                   )}
                 </div>
+              )}
+              {greetingSuggest && !noteMode && (
+                <button onClick={() => setDraft(greetingSuggest)}
+                  className="mx-3 mt-2 w-[calc(100%-1.5rem)] text-left px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-2 text-[12px] text-indigo-800">
+                  <Fi name="hand-wave" className="text-base shrink-0" />
+                  <span className="flex-1 truncate"><b>ทักทายลูกค้าใหม่:</b> {greetingSuggest}</span>
+                  <span className="text-[10px] text-indigo-500 shrink-0">แตะเพื่อใส่ในช่องพิมพ์</span>
+                </button>
               )}
               {productWarn && !prodWarnDismissed && (
                 <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2">

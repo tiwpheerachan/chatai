@@ -2,6 +2,7 @@ import { Topbar } from '@/components/layout/topbar';
 import { getCurrentContext } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { ProfileClient } from './profile.client';
+import { GreetingNames } from './greeting-names.client';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ export default async function ProfilePage() {
           permissions={ctx.permissions}
           scope={ctx.scope}
         />
+        <div className="max-w-3xl mt-5"><GreetingNames /></div>
       </div>
     </>
   );
