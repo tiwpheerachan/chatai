@@ -16,7 +16,7 @@ const GRAPH = 'https://graph.facebook.com/v21.0';
 const sysToken = () => process.env.META_SYSTEM_USER_TOKEN || process.env.META_PAGE_ACCESS_TOKEN || '';
 export const metaConfigured = () => Boolean(sysToken());
 
-export interface MetaPage { id: string; name: string; access_token: string; category?: string }
+export interface MetaPage { id: string; name: string; access_token: string; category?: string; ig_id?: string | null; ig_username?: string | null }
 
 let pageCache: { t: number; v: MetaPage[] } | null = null;
 const PAGE_TTL = 60 * 60_000; // 1h — page tokens are long-lived
@@ -27,40 +27,48 @@ export async function getPages(force = false): Promise<MetaPage[]> {
   if (!tok) return [];
   if (!force && pageCache && Date.now() - pageCache.t < PAGE_TTL) return pageCache.v;
   const out: MetaPage[] = [];
-  let url = `${GRAPH}/me/accounts?fields=id,name,access_token,category&limit=100&access_token=${encodeURIComponent(tok)}`;
+  // Also pull the linked Instagram business account (for IG DMs + comments).
+  let url = `${GRAPH}/me/accounts?fields=id,name,access_token,category,instagram_business_account{id,username}&limit=100&access_token=${encodeURIComponent(tok)}`;
   for (let i = 0; i < 10 && url; i++) {
     const r = await fetch(url);
     if (!r.ok) break;
     const j = await r.json();
-    out.push(...((j.data as MetaPage[]) || []));
+    for (const p of (j.data as any[]) || []) {
+      out.push({ id: p.id, name: p.name, access_token: p.access_token, category: p.category, ig_id: p.instagram_business_account?.id || null, ig_username: p.instagram_business_account?.username || null });
+    }
     url = j.paging?.next || '';
   }
   if (out.length) pageCache = { t: Date.now(), v: out };
   return out;
 }
 
-export async function pageTokenById(pageId: string): Promise<string | null> {
-  const p = (await getPages()).find(x => x.id === pageId);
+/** Page token by page id OR its linked Instagram account id (IG uses page token). */
+export async function pageTokenById(id: string): Promise<string | null> {
+  const p = (await getPages()).find(x => x.id === id || x.ig_id === id);
   return p?.access_token || null;
 }
 
-/** Resolve the page token to reply through for a conversation's brand + channel. */
-export async function pageTokenForBrand(brandId: string | null, type: 'facebook' | 'instagram' = 'facebook'): Promise<string | null> {
+/** Resolve the page token to reply through for a conversation's brand. One page
+ *  serves both FB + IG, so we look up the single channel row for the brand. */
+export async function pageTokenForBrand(brandId: string | null, _type: 'facebook' | 'instagram' = 'facebook'): Promise<string | null> {
   if (!brandId) return null;
   const { data } = await createAdminClient()
-    .from('channels').select('credentials').eq('brand_id', brandId).eq('type', type).eq('status', 'connected').limit(1).maybeSingle();
+    .from('channels').select('credentials').eq('brand_id', brandId).eq('type', 'facebook').eq('status', 'connected').limit(1).maybeSingle();
   const pageId = (data as any)?.credentials?.page_id;
   return pageId ? pageTokenById(String(pageId)) : null;
 }
 
-/** Which Nexus brand a page is connected to (webhook routing). */
-export async function brandForPage(pageId: string): Promise<string | null> {
+/** Which Nexus brand a page (or its IG account) is connected to — webhook routing.
+ *  FB webhooks send the page id in entry.id; IG webhooks send the IG account id. */
+export async function brandForPage(id: string): Promise<string | null> {
   const { data } = await createAdminClient()
-    .from('channels').select('brand_id').filter('credentials->>page_id', 'eq', pageId).limit(1).maybeSingle();
+    .from('channels').select('brand_id')
+    .or(`credentials->>page_id.eq.${id},credentials->>ig_id.eq.${id}`).limit(1).maybeSingle();
   return (data as any)?.brand_id || null;
 }
 
-/** The customer's real display name + avatar (page-scoped id). Best-effort. */
+/** The customer's real display name + avatar (page-scoped id). Best-effort — needs
+ *  the user-profile capability (App Review); returns {} otherwise. */
 export async function getSenderProfile(pageToken: string, psid: string): Promise<{ name?: string; pic?: string }> {
   try {
     const r = await fetch(`${GRAPH}/${psid}?fields=name,profile_pic&access_token=${encodeURIComponent(pageToken)}`);
