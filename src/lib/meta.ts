@@ -176,6 +176,52 @@ export async function replyToComment(brandId: string, commentId: string, platfor
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// ---- Page + Instagram insights (engagement / reach) --------------------------
+export interface BrandInsights {
+  fb: { name: string | null; fans: number | null; followers: number | null; reach28: number | null; engagement28: number | null };
+  ig: { username: string | null; followers: number | null; media: number | null; reach28: number | null } | null;
+}
+
+async function gget(url: string): Promise<any> {
+  try { const r = await fetch(url); const j = await r.json(); return j.error ? null : j; } catch { return null; }
+}
+// Sum a page-insights time series (best-effort — metrics change often).
+function seriesLatest(ins: any, metric: string): number | null {
+  const row = (ins?.data as any[] || []).find(d => d.name === metric);
+  if (!row) return null;
+  if (row.total_value?.value != null) return Number(row.total_value.value);
+  const vals = (row.values as any[]) || [];
+  const last = vals[vals.length - 1];
+  return last?.value != null ? Number(last.value) : null;
+}
+
+export async function getBrandInsights(brandId: string): Promise<BrandInsights | null> {
+  const bp = await brandPage(brandId);
+  if (!bp) return null;
+  const t = encodeURIComponent(bp.token);
+  const [page, pins, ig, iins] = await Promise.all([
+    gget(`${GRAPH}/${bp.pageId}?fields=name,fan_count,followers_count&access_token=${t}`),
+    gget(`${GRAPH}/${bp.pageId}/insights?metric=page_impressions_unique,page_post_engagements&period=days_28&access_token=${t}`),
+    bp.igId ? gget(`${GRAPH}/${bp.igId}?fields=username,followers_count,media_count&access_token=${t}`) : Promise.resolve(null),
+    bp.igId ? gget(`${GRAPH}/${bp.igId}/insights?metric=reach&period=days_28&metric_type=total_value&access_token=${t}`) : Promise.resolve(null),
+  ]);
+  return {
+    fb: {
+      name: page?.name ?? null,
+      fans: page?.fan_count ?? null,
+      followers: page?.followers_count ?? null,
+      reach28: seriesLatest(pins, 'page_impressions_unique'),
+      engagement28: seriesLatest(pins, 'page_post_engagements'),
+    },
+    ig: bp.igId ? {
+      username: ig?.username ?? null,
+      followers: ig?.followers_count ?? null,
+      media: ig?.media_count ?? null,
+      reach28: seriesLatest(iins, 'reach'),
+    } : null,
+  };
+}
+
 // Auto-map a page name to a Nexus brand: strip "Thailand/Store/Official" noise,
 // then match against brand name/slug. Returns brand_id or null.
 const clean = (s: string) => s.toLowerCase().replace(/thailand|thai|official|offcial|store|จำกัด|\(.*?\)/g, '').replace(/[^a-z0-9ก-๙]+/g, '').trim();
