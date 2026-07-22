@@ -115,6 +115,67 @@ export async function sendMetaImage(pageToken: string, recipientId: string, imag
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// ---- Comments on posts (Facebook + Instagram) --------------------------------
+export interface SocialComment {
+  id: string; platform: 'facebook' | 'instagram';
+  text: string; from: string | null; at: string | null;
+  post_id: string; post_excerpt: string; replied: boolean;
+}
+
+/** The page + IG account behind a brand (token + ids). */
+async function brandPage(brandId: string): Promise<{ pageId: string; igId: string | null; token: string } | null> {
+  const { data } = await createAdminClient().from('channels').select('credentials').eq('brand_id', brandId).eq('type', 'facebook').eq('status', 'connected').limit(1).maybeSingle();
+  const pageId = (data as any)?.credentials?.page_id;
+  if (!pageId) return null;
+  const token = await pageTokenById(String(pageId));
+  if (!token) return null;
+  return { pageId: String(pageId), igId: (data as any)?.credentials?.ig_id || null, token };
+}
+
+/** Recent comments across the brand's latest FB posts + IG media (newest first). */
+export async function getBrandComments(brandId: string, opts: { posts?: number } = {}): Promise<SocialComment[]> {
+  const bp = await brandPage(brandId);
+  if (!bp) return [];
+  const posts = opts.posts ?? 8;
+  const out: SocialComment[] = [];
+  // Facebook page posts + comments.
+  try {
+    const r = await fetch(`${GRAPH}/${bp.pageId}/published_posts?fields=id,message,comments.limit(30){id,message,from,created_time,comment_count}&limit=${posts}&access_token=${encodeURIComponent(bp.token)}`);
+    const j = await r.json();
+    for (const p of (j.data as any[]) || []) {
+      for (const c of (p.comments?.data as any[]) || []) {
+        out.push({ id: c.id, platform: 'facebook', text: c.message || '', from: c.from?.name || null, at: c.created_time || null, post_id: p.id, post_excerpt: (p.message || '(รูป/วิดีโอ)').slice(0, 50), replied: (c.comment_count || 0) > 0 });
+      }
+    }
+  } catch { /* ignore */ }
+  // Instagram media + comments.
+  if (bp.igId) {
+    try {
+      const r = await fetch(`${GRAPH}/${bp.igId}/media?fields=id,caption,comments.limit(30){id,text,username,timestamp,replies}&limit=${posts}&access_token=${encodeURIComponent(bp.token)}`);
+      const j = await r.json();
+      for (const m of (j.data as any[]) || []) {
+        for (const c of (m.comments?.data as any[]) || []) {
+          out.push({ id: c.id, platform: 'instagram', text: c.text || '', from: c.username || null, at: c.timestamp || null, post_id: m.id, post_excerpt: (m.caption || '(รูป/วิดีโอ)').slice(0, 50), replied: !!(c.replies?.data?.length) });
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  out.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  return out;
+}
+
+/** Reply to a comment (public reply under the post). */
+export async function replyToComment(brandId: string, commentId: string, platform: 'facebook' | 'instagram', message: string): Promise<{ ok: boolean; error?: string }> {
+  const bp = await brandPage(brandId);
+  if (!bp) return { ok: false, error: 'ยังไม่ได้เชื่อมเพจของแบรนด์นี้' };
+  const path = platform === 'instagram' ? `${GRAPH}/${commentId}/replies` : `${GRAPH}/${commentId}/comments`;
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, access_token: bp.token }) });
+    if (!r.ok) return { ok: false, error: (await r.text()).slice(0, 200) };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
 // Auto-map a page name to a Nexus brand: strip "Thailand/Store/Official" noise,
 // then match against brand name/slug. Returns brand_id or null.
 const clean = (s: string) => s.toLowerCase().replace(/thailand|thai|official|offcial|store|จำกัด|\(.*?\)/g, '').replace(/[^a-z0-9ก-๙]+/g, '').trim();
